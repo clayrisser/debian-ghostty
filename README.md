@@ -1,8 +1,8 @@
 <!-- LOGO -->
 <h1>
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/fe853809-ba8b-400b-83ab-a9a0da25be8a" alt="Ghostty Logo" width="128" style="margin-right: 20px">
-  <img src="https://www.debian.org/logos/openlogo-nd.svg" alt="Debian Logo" width="104" style="margin-left: 20px">
+  <a href="https://ghostty.org/"><img src="https://github.com/user-attachments/assets/fe853809-ba8b-400b-83ab-a9a0da25be8a" alt="Ghostty Logo" width="128" style="margin-right: 20px"></a>
+  <a href="https://www.debian.org/"><img src="https://www.debian.org/logos/openlogo-nd.svg" alt="Debian Logo" width="104" style="margin-left: 20px"></a>
   <br>Ghostty for Debian
 </h1>
   <p align="center">
