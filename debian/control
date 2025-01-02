@@ -5,12 +5,6 @@ Maintainer: Clay Risser <clay@clayrisser.com>
 Rules-Requires-Root: binary-targets
 Build-Depends:
  debhelper-compat (= 13),
- gcc-multilib [amd64],
- libadwaita-1-dev,
- libgtk-4-dev,
- libjpeg62-turbo-dev,
- pkg-config,
- wget,
 Standards-Version: 4.7.0
 Homepage: https://ghostty.org
 Vcs-Browser: https://github.com/ghostty-org/ghostty

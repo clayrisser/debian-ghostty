@@ -1,6 +1,6 @@
-ghostty (1.0.0-1~12.gbp4b4d40) UNRELEASED; urgency=medium
+ghostty (1.0.0-1~13.gbp9c580a) UNRELEASED; urgency=medium
 
-  ** SNAPSHOT build @4b4d4062dfed7b37424c7210d1230242c709e990 **
+  ** SNAPSHOT build @9c580abf7f496859848e8846b15aaa7eca780581 **
 
   [ Mitchell Hashimoto ]
   * Initial
@@ -9678,4 +9678,7 @@ ghostty (1.0.0-1~12.gbp4b4d40) UNRELEASED; urgency=medium
   * set version metadata to 1.0.0
   * build.zig: v1.0.0
 
- -- Clay Risser <clay@clayrisser.com>  Thu, 02 Jan 2025 19:53:33 +0300
+  [ Clay Risser ]
+  * Fixed missing build dep
+
+ -- Clay Risser <clay@clayrisser.com>  Thu, 02 Jan 2025 21:09:21 +0300
