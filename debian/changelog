@@ -1,6 +1,4 @@
-ghostty (1.0.0-1~13.gbp9c580a) UNRELEASED; urgency=medium
-
-  ** SNAPSHOT build @9c580abf7f496859848e8846b15aaa7eca780581 **
+ghostty (1.0.0-1) unstable; urgency=medium
 
   [ Mitchell Hashimoto ]
   * Initial
@@ -9680,5 +9678,8 @@ ghostty (1.0.0-1~13.gbp9c580a) UNRELEASED; urgency=medium
 
   [ Clay Risser ]
   * Fixed missing build dep
+  * Added prebuilt
+  * Fixed debian prebuilt
+  * Added build depends
 
- -- Clay Risser <clay@clayrisser.com>  Thu, 02 Jan 2025 21:09:21 +0300
+ -- Clay Risser <clay@clayrisser.com>  Thu, 02 Jan 2025 23:06:57 +0300
