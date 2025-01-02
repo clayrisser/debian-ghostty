@@ -1,0 +1,42 @@
+Source: ghostty
+Section: utils
+Priority: optional
+Maintainer: Clay Risser <clay@clayrisser.com>
+Rules-Requires-Root: binary-targets
+Build-Depends:
+ debhelper-compat (= 13),
+ gcc-multilib [amd64],
+ libadwaita-1-dev,
+ libgtk-4-dev,
+ libjpeg62-turbo-dev,
+ pkg-config,
+ wget,
+Standards-Version: 4.7.0
+Homepage: https://ghostty.org
+Vcs-Browser: https://github.com/ghostty-org/ghostty
+Vcs-Git: https://github.com/ghostty-org/ghostty.git
+
+Package: ghostty
+Architecture: any
+Depends:
+ ${shlibs:Depends},
+ ${misc:Depends},
+ libgtk-4-1,
+ libadwaita-1-0,
+Description: a fast, feature-rich, and cross-platform terminal emulator that uses platform-native UI and GPU acceleration
+ Ghostty is a terminal emulator that differentiates itself by being fast, feature-rich, and native.
+ While there are many excellent terminal emulators available, they all force you to choose between speed, features, or
+ native UIs. Ghostty provides all three.
+
+Package: libghostty-dev
+Section: libdevel
+Architecture: any
+Multi-Arch: same
+Depends:
+ ${misc:Depends},
+ ghostty (= ${binary:Version}),
+ libgtk-4-dev,
+ libadwaita-1-dev
+Description: Development files for ghostty
+ This package contains the header files and static libraries
+ needed to compile applications that use ghostty.

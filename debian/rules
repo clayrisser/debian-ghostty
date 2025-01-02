@@ -1,0 +1,34 @@
+#!/usr/bin/make -f
+
+export DH_VERBOSE = 1
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+ZIG_VERSION = 0.13.0
+
+DEB_HOST_ARCH ?= $(shell dpkg-architecture -qDEB_HOST_ARCH)
+ifeq ($(DEB_HOST_ARCH),amd64)
+    ZIG_TARBALL = zig-linux-x86_64-$(ZIG_VERSION).tar.xz
+    ZIG_DIR = zig-linux-x86_64-$(ZIG_VERSION)
+    ZIG_URL = https://ziglang.org/download/$(ZIG_VERSION)/zig-linux-x86_64-$(ZIG_VERSION).tar.xz
+else ifeq ($(DEB_HOST_ARCH),arm64)
+    ZIG_TARBALL = zig-linux-aarch64-$(ZIG_VERSION).tar.xz
+    ZIG_DIR = zig-linux-aarch64-$(ZIG_VERSION)
+    ZIG_URL = https://ziglang.org/download/$(ZIG_VERSION)/zig-linux-aarch64-$(ZIG_VERSION).tar.xz
+endif
+
+%:
+	dh $@
+
+override_dh_auto_clean:
+	rm -rf .zig-cache zig-out opt $(ZIG_TARBALL)
+
+override_dh_auto_build:
+	wget $(ZIG_URL) -O $(ZIG_TARBALL)
+	tar xf $(ZIG_TARBALL) --no-same-owner
+	mkdir -p opt
+	mv $(ZIG_DIR) opt/zig
+	opt/zig/zig build -Doptimize=ReleaseFast
+
+override_dh_auto_install:
+	opt/zig/zig build -p debian/tmp/usr -Doptimize=ReleaseFast
+	install -d debian/tmp/usr/include
+	cp -r include/* debian/tmp/usr/include/

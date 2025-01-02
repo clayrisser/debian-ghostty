@@ -1,0 +1,8 @@
+/.debhelper
+/debhelper-build-*
+/files
+/ghostty
+/ghostty.substvars
+/libghostty-dev
+/libghostty-dev.substvars
+/tmp

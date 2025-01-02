@@ -1,0 +1,97 @@
+# run the following to setup the server
+#
+#     sudo apt-get install -y \
+#         cowbuilder \
+#         git-buildpackage \
+#         osc
+#     sudo cowbuilder --create --distribution unstable --mirror http://deb.debian.org/debian --debug
+#     echo 'MIRRORSITE=http://http.us.debian.org/debian' > /etc/pbuilderrc
+#     echo 'USENETWORK=yes' >> /etc/pbuilderrc
+#     echo 'EXTRAPACKAGES="ca-certificates wget"' >> /etc/pbuilderrc
+#
+# run the following to initialize a new package
+#
+#     cd <GIT_REPO>
+#     git checkout v<VERSION>
+#     git checkout -b upstream
+#     git checkout -b debian/unstable
+#     dh_make -p <NAME>_<VERSION> --createorig -y
+#     rm -rf debian/*.ex
+#     gbp dch --auto --snapshot
+#     gbp export-orig --pristine-tar-commit
+#     gbp buildpackage -uc -us --git-ignore-new --git-pbuilder --git-builder="cowbuilder"
+#     git add .
+#     git commit -m "Debian unstable initial commit"
+#     gbp buildpackage -S -uc -us -d
+#
+# run the following to update to the upstream version
+#
+#     git checkout debian/unstable
+#     git merge <UPSTREAM_VERSION>
+#     gbp dch --auto --snapshot
+#     gbp export-orig
+#     gbp buildpackage -uc -us --git-ignore-new --git-pbuilder --git-builder="cowbuilder"
+#     git add .
+#     git commit -m "<MESSAGE>"
+#     gbp buildpackage -S -uc -us -d
+#
+
+variables:
+  OSC_USERNAME: clayrisser
+  OSC_ROOT_REPOSITORY: home:clayrisser
+  OSC_PASSWORD:
+
+stages:
+  - build
+
+build:
+  stage: build
+  image: registry.gitlab.com/bitspur/rock8s/images/debian-build:bookworm
+  rules:
+    - if: $CI_COMMIT_BRANCH =~ /^debian\//
+  before_script:
+    - |
+      mkdir -p $HOME/.config/osc
+      cat <<EOF > $HOME/.config/osc/oscrc
+      [general]
+      apiurl=https://api.opensuse.org
+
+      [https://api.opensuse.org]
+      user=$OSC_USERNAME
+      pass=$OSC_PASSWORD
+      credentials_mgr_class=osc.credentials.PlaintextConfigFileCredentialsManager
+      EOF
+    - |
+      git fetch origin "$CI_COMMIT_BRANCH"
+      git fetch origin pristine-tar
+      git checkout "$CI_COMMIT_BRANCH"
+      git pull origin "$CI_COMMIT_BRANCH"
+  script:
+    - |
+      export PACKAGE_NAME="$(cat debian/control | grep -E '^Source:' | sed 's|^Source: ||g')"
+      export PREVIOUS_PACKAGE_VERSION="$( (cat "$( (ls ../${PACKAGE_NAME}_*.dsc) 2>/dev/null | head -n1)" 2>/dev/null || true) | grep -E '^Version:' | sed 's|^Version: ||g')"
+      export OSC_REPOSITORY="${OSC_ROOT_REPOSITORY}:$(echo "$CI_COMMIT_BRANCH" | sed 's|^debian/||g')"
+    - (rm -rf ../${PACKAGE_NAME}_*.dsc) 2>/dev/null || true
+    - gbp buildpackage --git-debian-branch=$CI_COMMIT_BRANCH -S -uc -us -d
+    - git log
+    - ls ..
+    - |
+      export PACKAGE_VERSION="$(cat "$(ls ../${PACKAGE_NAME}_*.dsc 2>/dev/null | head -n1)" 2>/dev/null | grep -E '^Version:' | sed 's|^Version: ||g')"
+    - |
+      if dpkg --compare-versions "$PACKAGE_VERSION" lt "$PREVIOUS_PACKAGE_VERSION"; then
+        echo "new package version $PACKAGE_VERSION must be greater than or equal to previous version $PREVIOUS_PACKAGE_VERSION" >&2
+        exit 1
+      fi
+    - cd ..
+    - ([ -d "$OSC_REPOSITORY" ]) && true || osc checkout "$OSC_REPOSITORY"
+    - cd "$OSC_REPOSITORY"
+    - osc up
+    - ([ -d "$PACKAGE_NAME" ]) && true || (echo "osc package $PACKAGE_NAME not found in osc repository $OSC_REPOSITORY" 1>&2 && exit 1)
+    - cd "$PACKAGE_NAME"
+    - for f in $(osc status | sed 's|[^ ]*  *||g'); do (osc revert "$f" || true); done
+    - osc up
+    - for f in $(osc status | sed 's|[^ ]*  *||g'); do (rm -rf "$f" || true); done
+    - osc rm ./* || true
+    - mv "../../"${PACKAGE_NAME}_* ./
+    - osc add ./*
+    - osc commit -m "added $PACKAGE_NAME $PACKAGE_VERSION files"
