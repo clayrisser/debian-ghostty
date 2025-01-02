@@ -3,11 +3,8 @@
 %:
 	dh $@
 
-override_dh_auto_build:
-	tar -xf debian/prebuilt/ghostty-$(shell dpkg-architecture -qDEB_HOST_ARCH).tar.xz
-	mv ghostty debian/
-	mv libghostty-dev debian/
-
-override_dh_auto_install:
-
 override_dh_install:
+	tar -xf debian/prebuilt/ghostty-$(shell dpkg-architecture -qDEB_HOST_ARCH).tar.xz
+	mkdir -p debian/ghostty debian/libghostty-dev
+	mv ghostty/* debian/ghostty/
+	mv libghostty-dev/* debian/libghostty-dev/
