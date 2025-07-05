@@ -1,6 +1,6 @@
-ghostty (1.0.0-1~12.gbp4b4d40) UNRELEASED; urgency=medium
+ghostty (1.1.3-1~1.gbpf674ab) UNRELEASED; urgency=medium
 
-  ** SNAPSHOT build @4b4d4062dfed7b37424c7210d1230242c709e990 **
+  ** SNAPSHOT build @f674ab3589a79c0e0a0f221f1871080e7c06af61 **
 
   [ Mitchell Hashimoto ]
   * Initial
@@ -9678,4 +9678,1423 @@ ghostty (1.0.0-1~12.gbp4b4d40) UNRELEASED; urgency=medium
   * set version metadata to 1.0.0
   * build.zig: v1.0.0
 
- -- Clay Risser <clay@clayrisser.com>  Thu, 02 Jan 2025 19:53:33 +0300
+  [ DeftDawg ]
+  * - Add alt keybindings for ctrl+ins = Copy and shift+ins = Paste for non-MacOS systems
+
+  [ Trevor Elkins ]
+  * Move notification handling outside of the current render loop
+  * one more
+
+  [ Lucas Crownover ]
+  * Update help comment for backslash
+
+  [ Mitchell Hashimoto ]
+  * up the version to 1.0.1 everywhere for dev
+
+  [ Anund ]
+  * testing: handle execveZ failing during test execution
+  * testing: move cleanup of execveZ into the test code
+
+  [ Chip Bilbrey ]
+  * Re-add nix-compat flake input
+
+  [ Gregory Anders ]
+  * renderer: track if fg/bg/cursor color is explicitly set by an OSC
+
+  [ Anmol Wadhwani ]
+  * Use doc comments for focus-follows-mouse
+
+  [ Felix Salcher ]
+  * updated logic for grouping actions
+  * added doc comment
+
+  [ Joris Guex ]
+  * Fix docs formatting
+
+  [ Anund ]
+  * testing: point Command.zig at ~more universal external binaries
+
+  [ XiaoYan Li ]
+  * Fix zsh shell integration docs
+
+  [ Ankur Kothari ]
+  * fix use of bash builtin in elvish integration
+
+  [ Jon Parise ]
+  * macos: disable auto-updates for local (source) builds
+
+  [ David Leadbeater ]
+  * Handle an empty path to mean no pwd
+
+  [ Jon Parise ]
+  * macos: disable Sparkle checks in Debug and Release
+
+  [ Daniel Patterson ]
+  * Rename `goto_split` top/bottom directions to up/down.
+
+  [ Tim Culverhouse ]
+  * cli(list_themes): ignore .DS_Store
+
+  [ Bryan Lee ]
+  * Fix `DESTDIR` handling for terminfo installation
+
+  [ Yorick Peterse ]
+  * Fix building with -Dflatpak=true
+
+  [ Daniel Patterson ]
+  * Fix broken macOS changes
+
+  [ Anthony ]
+  * CI: Update release-tag.yml to include the version in the source archive name and prefix
+  * Use github yaml substitution for yaml element
+
+  [ Qwerasd ]
+  * coretext: exclude bitmap fonts from discovery
+
+  [ Mitchell Hashimoto ]
+  * github: issue template
+  * github: preapproved issue template
+  * github: preapproved template needs to be md
+  * github: make things more clear
+
+  [ LuK1337 ]
+  * gtk: equalize on double clicking the split handle
+
+  [ Mitchell Hashimoto ]
+  * fix prettier
+
+  [ xaviduds ]
+  * Update doc inform toggle_quick_terminal macOS only
+
+  [ Eli ]
+  * fix: typo
+
+  [ Tristan Partin ]
+  * apprt/gtk: color popovers when window-theme=ghostty
+
+  [ Rohit-Bevinahally ]
+  * modify cmd+9 behaviour
+
+  [ Brandon Romano ]
+  * Update docs generators to include proper edit on github links
+
+  [ Koray08 ]
+  * Add 'command delete' default to macOS
+
+  [ Kat ]
+  * Use `source` in the example for sourcing Zsh shell integration
+
+  [ Leigh Oliver ]
+  * fix(gtk): fix segfault/bus error on ctrl+d
+
+  [ AP Darkly ]
+  * fix probable typo in Config.zig
+
+  [ Felix Salcher ]
+  * deinit buffer
+
+  [ Maciej Bartczak ]
+  * Add delay before updating the title
+
+  [ Finn Voorhees ]
+  * Add MDItemKeywords
+
+  [ Jeffrey C. Ollie ]
+  * gtk: add option to not link against libX11
+
+  [ Matt Mirus ]
+  * docs: correct default value of `gtk-single-instance`
+
+  [ Koray08 ]
+  * Replace 'w' with '\x15'
+
+  [ Matt Mirus ]
+  * chore: undo unintentional change
+
+  [ Hisam Fahri ]
+  * Update Config.zig
+
+  [ Ronit Gandhi ]
+  * docs: add guide for setting quick terminal toggle keybind
+
+  [ Jelle Besseling ]
+  * docs: Add info about adjustments to adjustment config options
+
+  [ Mitchell Hashimoto ]
+  * ci: test gtk via a matrix
+  * prettier
+  * run gtk matrix on small instances
+
+  [ Qingyao Sun ]
+  * Clarify how to read logs on macOS
+
+  [ Mitchell Hashimoto ]
+  * ci: install nix
+
+  [ mitchellh ]
+  * deps: Update iTerm2 color schemes
+
+  [ Zein Hajj-Ali ]
+  * Set alpha component for fullscreen background colour
+
+  [ sin-ack ]
+  * font/freetype: Rewrite monoToGrayscale algorithm
+  * font/freetype: Enable bitmap glyphs for non-color faces
+
+  [ Mitchell Hashimoto ]
+  * Update the pre-approved issue template
+  * ci: our GTK tests were installing Cachix twice
+
+  [ Mohammadi, Erfan ]
+  * confirm-close-surface option can be set to always to always require confirmation Fixes #3648 The confirm-close-surface configuration can now be set to always ensuring a confirmation dialog is shown before closing a surface, even if shell integration indicates no running processes.
+
+  [ Misaki Kasumi ]
+  * cgroup: change suffix to .scope
+
+  [ Xiaoyan Li ]
+  * Use premultiplied alpha for renderer clearColor
+
+  [ XiaoYan Li ]
+  * Fix the typing error when building on Linux
+
+  [ Richard Feldman ]
+  * Fix markdown formatting for (blank) in docs
+
+  [ sin-ack ]
+  * font/freetype: Add test for crisp bitmap font rendering
+  * font/freetype: Downgrade pixfmt conversion log to debug
+
+  [ Misaki Kasumi ]
+  * misc: add desktop entry fields to support xdg-terminal-exec
+
+  [ Jeffrey C. Ollie ]
+  * gtk/x11: link directly to libX11, no more dlopen
+
+  [ Tristan Partin ]
+  * apprt: add window-titlebar-{background,foreground} config options
+
+  [ Maciej Bartczak ]
+  * Invalidate the timer when the surface is destroyed
+
+  [ hustcer ]
+  * chore: Add milestone workflow to add milestone to merged PR and fixed Issues
+
+  [ Sebastian Estrella ]
+  * Add default Nix overlay
+
+  [ Tim Culverhouse ]
+  * surface: handle hyperlinks more reliably
+
+  [ Adam Wolf ]
+  * fix: scrollback limit not being parsed correctly
+
+  [ Mitchell Hashimoto ]
+  * config: add `title_report` (default false) to configure CSI 21 t
+
+  [ Bryan Lee ]
+  * Add keyboard navigation for Terminal IO window
+
+  [ Mitchell Hashimoto ]
+  * Revert "macos: disable auto-updates for local (source) builds (#3273)"
+
+  [ GoProSlowYo ]
+  * Fix typo in list-themes browser
+
+  [ Tristan Partin ]
+  * apprt/gtk: style the tab overview when window-theme=ghostty
+  * apprt/gtk: use CSS variables to deduplicate code
+
+  [ 521337 ]
+  *  Fix typo in config reference: window-decorations -> window-decoration
+
+  [ Tristan Partin ]
+  * apprt/gtk: create the tab overview even if gtk-titlebar=false
+
+  [ Jon Parise ]
+  * macos: disable auto-updates for local builds
+
+  [ Jan200101 ]
+  * add option to strip build regardless of optimization
+
+  [ Mitchell Hashimoto ]
+  * ci: keep old source tarballs as well
+  * note source tarball name for 1.0.0
+  * Allow startup without $HOME writable
+
+  [ Daniel Patterson ]
+  * Add "top" and "bottom" aliases
+
+  [ Iain H ]
+  * Correct the comptime GTK atLeast() function
+
+  [ Caleb Norton ]
+  * macos: restore 0 blur-radius when reloading config
+
+  [ Tristan Partin ]
+  * apprt/gtk: fix website link in about window
+
+  [ Iain H ]
+  * Add unit tests
+
+  [ XiaoYan Li ]
+  * Add back quotes for variables in the zsh shell integration to improve compatibility
+
+  [ Caleb Norton ]
+  * macos: correctly save terminal fullscreen style
+
+  [ Mitchell Hashimoto ]
+  * macos: Help menu goes to website docs
+
+  [ Tristan Partin ]
+  * apprt/gtk: fix the combination of gtk-titlebar=false and gtk-tabs-location=hidden
+
+  [ moni-dz ]
+  * surface: don't issue mode 2031 DSR reports when colors are changed by a VT sequence
+
+  [ Tristan Partin ]
+  * apprt/gtk: make window-decoration=false with gtk-titlebar=true look better
+
+  [ Arvin Verain ]
+  * gtk: Install 1024x1024 icon
+
+  [ Tristan Partin ]
+  * apprt/gtk: move some static CSS to the style.css file
+
+  [ Bryan Lee ]
+  * macos: add generated Nvim files to app bundle
+
+  [ Leigh Oliver ]
+  * fix(gtk): fix issue detecting preferred color scheme
+
+  [ Maciej Bartczak ]
+  * zsh: handle short boolean flags
+  * fish: handle short boolean flags
+
+  [ Damien Mehala ]
+  * fix: selected text remains after clear_screen action
+
+  [ Iain H ]
+  * Be more idiomatic in tests when comparing to booleans
+
+  [ Jon Parise ]
+  * bash: improved 'sudo' command wrapper
+  * bash: remove "request for experts" comment
+
+  [ Damien Mehala ]
+  * fix: quick terminal CPU spikes
+
+  [ Ayman Bagabas ]
+  * fix: handle intermediate bytes in CSI and ESC sequences
+
+  [ Jeffrey C. Ollie ]
+  * gtk: correct comptime adwaita.versionAtLeast() comparison
+
+  [ Mitchell Hashimoto ]
+  * config: edit opens AppSupport over XDG on macOS, prefers non-empty paths
+
+  [ Bryan Lee ]
+  * Ensure correct coordinate ordering in selection file write
+  * Add pin order assertion in Pin.pageIterator
+
+  [ Jan200101 ]
+  * give strip option a proper description
+
+  [ Damien Mehala ]
+  * fix: quick terminal `focus-follows-mouse` behaviour
+
+  [ Qwerasd ]
+  * Revert "coretext: exclude bitmap fonts from discovery"
+  * font/coretext: properly resolve metrics for bitmap-only fonts
+
+  [ acsetter ]
+  * feat: support for short hex colors in config
+
+  [ Mitchell Hashimoto ]
+  * font/freetype: hardcode DPI in test to avoid variation between OS
+  * os: don't return stack memory
+
+  [ kaizo ]
+  * Fix clipboard confirmation window typo
+
+  [ Jeffrey C. Ollie ]
+  * gtk: don't use gtk_window_set_titlebar if adwaita is enabled but it's older than 1.4.0
+
+  [ Mitchell Hashimoto ]
+  * macOS: weak self for event monitor to avoid retain cycle for controllers
+
+  [ Jeffrey C. Ollie ]
+  * gtk: make sure that window-decoration is honored on all paths
+
+  [ Leah Amelia Chen ]
+  * feat(config): generate default template when config file is not found
+
+  [ Jeffrey C. Ollie ]
+  * gtk: also add css window-decorated class when toggling window decorations
+
+  [ Hugo Gouveia ]
+  * doc: add background-opacity needs restart
+
+  [ Qwerasd ]
+  * font: allow non-boolean font feature settings
+
+  [ Mitchell Hashimoto ]
+  * input: parse triggers with codepoints that map to keys as translated
+  * config: fix segfault if font-family is reset via the CLI
+
+  [ mitchellh ]
+  * deps: Update iTerm2 color schemes
+
+  [ Maciej Bartczak ]
+  * explicitly handle bool values
+
+  [ Jan200101 ]
+  * move strip switch behind option
+  * reuse strip option for libraries
+
+  [ Aarni Koskela ]
+  * config: improve documentation for color configuration
+
+  [ Maciej Bartczak ]
+  * Implement loading custom css in the GTK app
+
+  [ Mitchell Hashimoto ]
+  * `write_*_file` actions default to mode 0600
+
+  [ Jeffrey C. Ollie ]
+  * core: fix windows compile regression from #4021
+
+  [ Maciej Bartczak ]
+  * code review: - use ArrayListUnmanaged - read the stylesheet file using zig api - use proper css_provider_load_ function depending on the GTK version
+
+  [ Qwerasd ]
+  * test/terminal: add failing sgr direct color parsing test
+  * fix(terminal): correct SGR direct color parsing
+
+  [ Jan200101 ]
+  * don't build harfbuzz when system integration is enabled
+
+  [ Maciej Bartczak ]
+  * code review: - initialize custom_css_providers using a default value - remove usage of buffered reader - document maximum file size - handle exceptions explicitly
+
+  [ Mitchell Hashimoto ]
+  * ci: proper blob file setup for source tarballs on release
+  * ci: source tarball files must not be quoted
+  * up version to 1.0.2 for development
+
+  [ Daniel Fox ]
+  * Set the paste preview to monospace
+
+  [ Mitchell Hashimoto ]
+  * PACKAGING: Note GLFW is not for distribution
+
+  [ Ryan Rotter ]
+  * correct default keybinding cmd+backspace for macOS
+
+  [ Maciej Bartczak ]
+  * code review - revert explicit error handling
+
+  [ Morgan ]
+  * Fix for #1938, add GDK_DEBUG=gl-no-fractional
+
+  [ moritz-john ]
+  * Fix: typo in comment
+
+  [ arthsmn ]
+  * Adding default.nix for flake-compat
+
+  [ Sebastian Lövdahl ]
+  * Fix typo in `freetype-load-flags` documentation
+
+  [ Maciej Bartczak ]
+  * Try to create parent directory when writing default config
+
+  [ Tim Visher ]
+  * Clarify CLI vs. Keybind Actions documentation
+
+  [ Yorick Peterse ]
+  * Don't install 1024x1024 icons for Flatpak
+
+  [ Jeffrey C. Ollie ]
+  * core: if we change RLIMIT_NOFILE, reset it when executing commands
+
+  [ Damien MEHALA ]
+  * feat: parse ConEmu OSC9;1
+
+  [ Damien Mehala ]
+  * code review
+
+  [ Ethan Conneely ]
+  * copy_to_clipboard return false if not performed
+  * Add performable flag
+  * Do nothing if action not performed with flag
+
+  [ Jeffrey C. Ollie ]
+  * wuffs: update, add jpeg decoding, add simple tests
+  * wuffs: use common struct to return decoded image data
+
+  [ Kat ]
+  * Fix format string of font size in points in the inspector
+
+  [ Clay Risser ]
+  * Fixed missing build dep
+
+  [ Jade ]
+  * Improve goto_split documentation
+  * Update Binding.zig
+  * Improve new_split documentation
+  * Improve resize_split documentation
+
+  [ Anund ]
+  * keybindings: improve sort to include key value 1,2,3,4...
+
+  [ Bryan Lee ]
+  * Use `$HOME/Library/Caches` on macOS instead of `$HOME/.cache`
+  * Respect `XDG_CACHE_HOME` and use`NSFileManager` for cache paths
+  * Use bundle ID for macOS cache directory path
+  *  Remove the redundant check and directly use `dir()`
+
+  [ Nhan Luu ]
+  * chore: fix typos
+
+  [ Liam Hupfer ]
+  * gtk: Always read gtk-xft-dpi for font scaling
+
+  [ Mitchell Hashimoto ]
+  * crash: prefer XDG cache dir if available
+
+  [ Christoffer Tønnessen ]
+  * Restore hidden titlebar after fullscreen
+
+  [ z-jxy ]
+  * expand tilde to HOME in config
+  * refactor: handle tilde before checking realpath
+  * use `home()` from `os/homedir`, check for `~/` rather than `~`
+  * move tilde expansion functionality to `os/homedir`
+  * move current `expandHome` functionality into separate `expandHomeUnix` function
+  * add test for `expandHomeUnix`
+
+  [ Mitchell Hashimoto ]
+  * config: make diagnostic if homedir expansion fails
+
+  [ Jon Parise ]
+  * macos: make auto-update optional
+
+  [ Mitchell Hashimoto ]
+  * config: windows can't expand homedir (yet)
+
+  [ Adam Wolf ]
+  * feat(linux): allow setting an intial start position
+  * feat(macos): allow setting an intial start position
+  * chore: add missing case in switch statement
+  * chore: removed setInitialWindowPosition from gtk and renamed window-position-{x,y} to start-position-{x,y} for clarity
+  * docs: fix spelling of macOS
+  * revert: renaming of window-position-{x,y}
+  * apprt/glfw: handle setting initial window position when window is created
+  * macos: handle setting initial window position when window is created
+  * docs: update config docs to reflect window positioning changes
+  * chore: rename window-position-{x,y} to window-initial-position-{x,y}
+
+  [ Mitchell Hashimoto ]
+  * tweaks to window position
+
+  [ Jeffrey C. Ollie ]
+  * gtk: refactor gtk & adw notebook implementations
+  * core: add build option to disable sentry
+
+  [ Mitchell Hashimoto ]
+  * remove sentry test for macOS, remove windows check
+
+  [ Matt Rochford ]
+  * Don't steal focus on mouse events that are within 1 px
+
+  [ Mitchell Hashimoto ]
+  * Update src/config/Config.zig
+  * update wording
+
+  [ Yotam Gurfinkel ]
+  * config: Add the option `toast_on_clipboard_copy`
+
+  [ Mitchell Hashimoto ]
+  * config: change toast config to packed struct
+
+  [ Damien Mehala ]
+  * code review
+
+  [ Mitchell Hashimoto ]
+  * Move resource limits to a dedicated struct, restore before preexec
+  * ci: only test pkgs on Linux
+
+  [ roshal ]
+  * config: allow other base numbers for palette indexes
+
+  [ Damien Mehala ]
+  * feat: parse ConEmu OSC9;2
+
+  [ Gabriel Moreno ]
+  * macos: fix window borders on dark mode
+
+  [ Mitchell Hashimoto ]
+  * Add docs for performable
+
+  [ Jeffrey C. Ollie ]
+  * gtk: fix non-notebook separator colors
+
+  [ Mitchell Hashimoto ]
+  * update our default bindings that are performable
+  * config: improve adw-toast docs
+
+  [ David Leadbeater ]
+  * kittygfx: Ensure temporary files are named per spec
+
+  [ Jeffrey C. Ollie ]
+  * core: detect what desktop environment the user is using
+  * core: prohibit checking for the desktop environment on linux during comptime
+  * cli: only print out DE when using the GTK apprt
+
+  [ David Leadbeater ]
+  * Add negative test for temporary filename and fix other tests
+
+  [ Bryan Lee ]
+  * Correct typos and update typos.toml
+
+  [ Mitchell Hashimoto ]
+  * Revert "gtk: equalize on double clicking the split handle (#3557)"
+
+  [ azhn ]
+  * Fix cimgui version string to match pkg/cimgui/vendor/ and the upstream version
+  * Fix: Update pkg/simdutf/build.zig.zon to match vendored version
+
+  [ Bryan Lee ]
+  * Ensure all search results are visible in theme list
+
+  [ Damien Mehala ]
+  * code review
+
+  [ Alexandre Antonio Juca ]
+  * feat: Display memory usage and and limit in both bytes and Kb for improved readability
+
+  [ acehinnnqru ]
+  * fix: macos incorrect quick terminal position
+
+  [ Jan200101 ]
+  * don't build fontconfig when system integration is enabled
+
+  [ Mitchell Hashimoto ]
+  * os: directory functions should prefer cached home if available
+  * input: legacy encoding falls back to mapping of logical key for ctrlseq
+
+  [ Peter Cock ]
+  * Fixing a few typos in the source code comments (#4529)
+
+  [ Qwerasd ]
+  * font(coretext): add config to adjust strength of `font-thicken`.
+
+  [ Jeffrey C. Ollie ]
+  * gtk: add class names to the rest of the windows
+
+  [ Jan200101 ]
+  * don't build oniguruma when system integration is enabled
+
+  [ Caleb Norton ]
+  * Docs: update goto_split documentation
+
+  [ Jan200101 ]
+  * don't build freetype2 when system integration is enabled
+  * always link system freetype2 using pkg-config
+  * don't make library building logic public
+  * don't error when gtk4 could not be found via pkg-config
+
+  [ dkmar ]
+  * fix typo: CSI header
+
+  [ Alexandre Antonio Juca ]
+  * chore: use KiB notation for representing memory size
+
+  [ Mitchell Hashimoto ]
+  * Move app quit to apprt action
+
+  [ Damien Mehala ]
+  * [3/12] parse ConEmu OSC9;3
+
+  [ Mitchell Hashimoto ]
+  * Move app quit to apprt action
+
+  [ Kiril Angov ]
+  * Improve the documentation for move_tab keybind action
+
+  [ Mitchell Hashimoto ]
+  * core: add keyEventIsBinding
+  * macos: add NSEvent extension to convert to libghostty key events
+  * macos: if a key event would result in an immediate binding then do it
+  * Key events return boolean if handled
+  * macos: manual send keyUp event for command key
+  * macos: handle overridden system bindings with no focused window
+
+  [ Alexandre Antonio Juca ]
+  * chore: rename file
+
+  [ Jeffrey C. Ollie ]
+  * gtk: add `split-separator-color` config
+
+  [ Patrick Reynolds ]
+  * Use \w instead of $PWD for title bar
+
+  [ mitchellh ]
+  * deps: Update iTerm2 color schemes
+
+  [ Christian Schneider ]
+  * Implement configuration option split-divider-color for macOS
+  * Remove outdated comment
+
+  [ Jeffrey C. Ollie ]
+  * gtk: enable window-title-font-family
+
+  [ Mitchell Hashimoto ]
+  * macos: alphabetize resources in xcode project
+  * macos: detect IME input source change as part of keyDown event
+
+  [ Tim Culverhouse ]
+  * gtk: send copy_to_clipboard toast from Surface
+  * config: rearrange default copy_to_clipboard keybinds
+
+  [ Beau McCartney ]
+  * vim compiler plugin for ghostty filetype - validates config
+
+  [ Leah Amelia Chen ]
+  * build: add wayland
+  * gtk(wayland): add support for background blur on KDE Plasma
+  * fix(gtk): adjust `background` CSS class dynamically on config reload
+  * config: allow booleans for `background-blur-radius`
+
+  [ Mitchell Hashimoto ]
+  * nix: update hash
+  * config: minor config changes
+  * nix fmt
+  * config: fix tests
+
+  [ Alexandre Antonio Juca ]
+  * docs: improve terminal page list documentation
+
+  [ Mitchell Hashimoto ]
+  * macos: ignore modifier changes while IM is active
+  * config: store non-reproducible diagnostics in replay steps
+
+  [ Beau McCartney ]
+  * just reset makeprg and errorformat
+
+  [ Jan200101 ]
+  * don't error if gtk4 pkg-config configuration could not be found this prevents issues with people running `zig build --help` without gtk4 installed
+
+  [ yonihemi ]
+  * iOS: Fix crash on device
+
+  [ Tristan Partin ]
+  * apprt/gtk: use a subtitle to mark the current working directory
+
+  [ Evelyn Harthbrooke ]
+  * macOS: Add Bluetooth permission description; fixup other descs.
+
+  [ George Joseph ]
+  * Fix minimum initial window size
+
+  [ Evelyn Harthbrooke ]
+  * macOS: fixup Photo Library description to make more sense.
+
+  [ Mitchell Hashimoto ]
+  * macos: fix retain cycle preventing window from freeing
+
+  [ Jon Parise ]
+  * bash: narrow the scope of GHOSTTY_BASH_ENV
+
+  [ Mitchell Hashimoto ]
+  * macos: halt NSEvent processing at app scope only if event is handled
+
+  [ Jeffrey C. Ollie ]
+  * core: improve desktop environment detection
+
+  [ Daniel Fox ]
+  * Set the paste button in the GTK dialog as default
+  * Expose clipboard cancel button and focus it
+  * Add destructive/suggested action classes
+
+  [ Mitchell Hashimoto ]
+  * config: `unbind` keybind triggers unbinds both translated and physical
+
+  [ Jon Parise ]
+  * termio: don't leak VTE_VERSION into child processes
+
+  [ Mustaque Ahmed ]
+  * feat: add support for file paths starts with `../` `./` and `/`
+
+  [ Mitchell Hashimoto ]
+  * terminal: ConEmu OSC9 parsing is more robust and correct
+
+  [ Tristan Partin ]
+  * apprt/gtk: continue cleanup of window-decoration code
+
+  [ Jon Parise ]
+  * termio: explain why we're removing VTE_VERSION
+
+  [ Qwerasd ]
+  * refactor(font): move `Metrics` out of `face`
+  * refactor(font): move ownership of `Metrics` to `Collection`
+
+  [ Tristan Partin ]
+  * apprt/gtk: fix window colors when window-theme=ghostty
+
+  [ Bryan Lee ]
+  * Add IPv6 URL pattern support with comprehensive test cases
+
+  [ Jon Parise ]
+  * bash: set the title command in preexec
+  * bash: add license declaration for kitty-derived code
+
+  [ Gregory Anders ]
+  * renderer: respect reverse with cursor-invert-fg-bg
+
+  [ sin-ack ]
+  * apprt/gtk: Add version.runtimeAtLeast
+  * apprt/gtk: Move most version checks to runtime
+
+  [ Jon Parise ]
+  * bash: drop automatic shell integration with --posix
+
+  [ Mitchell Hashimoto ]
+  * This is a major refactor of `build.zig`.
+  * Use build.zig.zon for Wayland protocols
+
+  [ Gabriele Musco ]
+  * linux: add "Open in Ghostty" shortcut for nautilus
+
+  [ Jeffrey C. Ollie ]
+  * gtk: implement dropping files and strings
+
+  [ Wes Campaigne ]
+  * Implement "Paste Selection" on macOS like Terminal.app
+
+  [ Kwee Lung Sin ]
+  * chore: replace adwaita-1 to libadwaita-1 for better pkg-config handling
+
+  [ Soh Satoh ]
+  * Show quick terminal on another full-screen app
+  * Add quick-terminal-space-behavior option
+  * Move the quick terminal to active space if toggle() called while opening on another space
+  * fix the comment (quick-terminal-space-behavior)
+  * Fix the issue that the quick term not shown on first call
+
+  [ Sabarigirish Manikandan ]
+  * close_tab keybind (gtk apprt only) (#4033)
+
+  [ Jeffrey C. Ollie ]
+  * core: add docs for ShellEscapeWriter
+
+  [ Mitchell Hashimoto ]
+  * misc cleanups
+  * macos: animate in even if remain on another space
+  * config: close_tab on macOS should be cmd+opt+w to match iTerm2
+
+  [ Bryan Lee ]
+  * Add `close_tab` keybinding action for macOS
+
+  [ Danny Lin ]
+  * termio/exec: fix SIGPIPE crash when reader exits early
+
+  [ Bryan Lee ]
+  * Add keybind action `copy_url_to_clipboard`
+
+  [ Mitchell Hashimoto ]
+  * build: requireZig cleanup
+
+  [ Jeffrey C. Ollie ]
+  * gtk: clean up context menu creation & refresh
+
+  [ Bryan Lee ]
+  * Reduce ghost emoji flash in title bar
+  * Simplify let binding in `TerminalView` title logic
+  * Add fallback timer for empty window title
+
+  [ George Joseph ]
+  * Implement a size-limit function for GTK
+
+  [ Bryan Lee ]
+  * ci: update zig version regex in windows build
+  * ci: move version output after variable definition
+
+  [ Mitchell Hashimoto ]
+  * build: update zig-wayland to use new LazyPath API
+  * macos: improve initial size calculation
+  * macos: Handle ctrl characters in IME input
+
+  [ Ismael Arias ]
+  * feat(gtk): show menu in context menu if titlebar is disabled
+  * feat(GTK): remove comment
+
+  [ Mitchell Hashimoto ]
+  * Revert "termio/exec: fix SIGPIPE crash when reader exits early"
+
+  [ Leah Amelia Chen ]
+  * gtk: unify Wayland and X11 platforms
+  * gtk(x11): implement background blur for KDE/KWin on X11
+
+  [ Anund ]
+  * vim: work with theme config files
+
+  [ Onno Siemens ]
+  * docs: update copy-on-select documentation
+
+  [ Mitchell Hashimoto ]
+  * apprt/gtk: winproto
+  * ci: test gtk-wayland in the GTK matrix
+  * ci: typos
+  * Fix wayland-scanner/protocols packaging dependency
+
+  [ Jeffrey C. Ollie ]
+  * GTK: refactor headerbar into separate Adwaita & GTK structs
+
+  [ Mitchell Hashimoto ]
+  * apprt/gtk: make sure noop winproto never initializes
+  * ci: add required checks jobs
+
+  [ Jeffrey C. Ollie ]
+  * gtk: add config option to disable GTK OpenGL debug logging
+  * gtk: add config option to control GSK_RENDERER env var
+  * gtk: better method for setting GDK env vars
+
+  [ Mitchell Hashimoto ]
+  * ci: avoid "successful failure" of status check job by inspecting needs
+  * ci: required checks must be named separately
+
+  [ Jeffrey C. Ollie ]
+  * gtk: default to opengl debugging only on debug builds
+
+  [ Alexandre Antonio Juca ]
+  * fix: ensure terminal tabs are reconstructed in main window after toggling visibility
+  * fix: hide windows without calling orderOut API
+  * chore: revert on TerminalManager changes
+
+  [ Mitchell Hashimoto ]
+  * macos: rework toggle_visibility to better match iTerm2
+
+  [ Leigh Oliver ]
+  * fix(gtk): add close confirmation for tabs
+  * remove unnecessary struct
+
+  [ Mitchell Hashimoto ]
+  * apprt/gtk: adw tab view close confirmation
+
+  [ Jeffrey C. Ollie ]
+  * gtk: fix crash due to accessing invalidated pointer to adwaita notebook
+  * gtk: add some comments about closing the last tab invaldating self pointer
+
+  [ Samuel ]
+  * declare `StartupWMClass` in .desktop
+
+  [ Adam Wolf ]
+  * apprt/gtk: add toggle_maximize keybind and window-maximize config option
+  * chore: rename config value to maximize and move startup logic to proper location
+
+  [ Damien Mehala ]
+  * parse ConEmu OSC9;5
+
+  [ Bryan Lee ]
+  * Correct IME position calculation with window padding
+  * Clear selection when IME input starts
+
+  [ Damien Mehala ]
+  * code review
+
+  [ Mitchell Hashimoto ]
+  * macos: paste multiple files separated by space
+  * core: clear selection whenever preedit is changed
+
+  [ mitchellh ]
+  * deps: Update iTerm2 color schemes
+
+  [ Alexandre Antonio Juca ]
+  * feat: ensure text, files and URLs can be drag and dropped to terminal window
+
+  [ Mitchell Hashimoto ]
+  * macos: move drop implementation to separate extension
+
+  [ Michael Himing ]
+  * fix(gtk): fix segfault on ctrl-d on older adw
+
+  [ james ]
+  * for GTK runtime, don't call cursorPosCallback in mouse motion callback if the cursor hasn't actually moved
+
+  [ Mitchell Hashimoto ]
+  * macos: only set quick terminal level to popUpMenu during animation
+
+  [ Pavlos Karakalidis ]
+  * fix(window): ensure last_tab action on linux navigates to last tab
+
+  [ Jeffrey C. Ollie ]
+  * gtk: hide titlebar if fullscreened
+
+  [ Andreas Skielboe ]
+  * Fix backslash comment in ghostty.h
+
+  [ Bryan Lee ]
+  * Preserve full URL when pasting from clipboard
+
+  [ Mitchell Hashimoto ]
+  * terminal: keep track of colon vs semicolon state in CSI params
+
+  [ Qwerasd ]
+  * fix(PageList): when cloning, explicitly set cols
+  * Metal: blend in Display P3 color space, add option for linear blending
+
+  [ Jeffrey C. Ollie ]
+  * gtk: add config entry to hide titlebar when the window is maximized
+
+  [ Mitchell Hashimoto ]
+  * config: remove experimental linear and merge into text-blending
+
+  [ Alexandre Antonio Juca ]
+  * fix: Ensure file paths derived from pasteboard operations are properly escaped
+
+  [ otomist ]
+  * add and use flag for selecting empty lines in the selectLine function
+
+  [ Leah Amelia Chen ]
+  * gtk(wayland): implement server-side decorations
+
+  [ Michael Himing ]
+  * fix: building on systems with older adwaita
+
+  [ Mitchell Hashimoto ]
+  * config: fix window-decoration enum parsing to allow client, none
+
+  [ Qwerasd ]
+  * fix(macos): prevent transparency leakage/flash in new/resized surfaces
+
+  [ Jeffrey C. Ollie ]
+  * nix: vms for testing ghostty
+  * nix: fix dark mode setting
+  * nix: disable geary
+  * nix vm: more slimming
+  * nix vm: maybe get vms working on darwin
+  * nix vm: add documentation, add Gnome/X11 VM
+  * fix typo
+  * nix vm: add plasma and cinnamon vms
+  * nix vm: simplify vm definition
+  * nix vm: try and make vm creation more re-usable
+  * nix vm: more reusability
+  * nix vm: +fish +zsh -zig
+  * nix: document how to create custom vms
+
+  [ Leah Amelia Chen ]
+  * gtk(wayland): respect compositor SSD preferences
+
+  [ Qwerasd ]
+  * fix(Metal): handle non-extended padding color transparency
+
+  [ Jeffrey C. Ollie ]
+  * nix: add x11 xfce vm
+
+  [ Jon Parise ]
+  * bash: less intrusive automatic shell integration
+  * bash: remove sed dependency for history processing
+  * bash: improve prior_trap processing
+
+  [ Mitchell Hashimoto ]
+  * macos: respect the "auto" window decoration setting
+
+  [ Albert Dong ]
+  * Manually call orderOut on terminal close alert
+
+  [ Gabriel Holodak ]
+  * fix(gtk): confirm tab close on close_tab action
+
+  [ Qwerasd ]
+  * fix(Metal): fix incorrect premultiplication of colors
+
+  [ Albert Dong ]
+  * Set alert to nil when modal interacted with
+
+  [ Jeffrey C. Ollie ]
+  * gtk: always set the title on the underlying window when using adwaita
+
+  [ AltCode ]
+  * macOS: add link to release notes on appcast
+
+  [ Qwerasd ]
+  * fix(wuffs): don't premul alpha when loading images
+
+  [ Bryan Lee ]
+  * Fix `shell-integration-features` being ignored when `shell-integration` is `none`
+  * Add tests for setup shell integration features
+  * Update the documentation to better explain that `shell-integration-features`
+  * Ensure `setup_features` runs even when shell detection fails
+  * Add default documentation for undocumented keybind actions
+  * Ensure last action's documentation is properly generated
+  * Improve `list-actions` command documentation formatting
+  * Extract keybind actions help generation into a dedicated module
+
+  [ Leah Amelia Chen ]
+  * gtk: don't toggle headerbar on (un)maximize while using SSDs
+
+  [ Ikko Eltociear Ashimine ]
+  * chore: update stb_image.h
+
+  [ Leorize ]
+  * fix(flatpak): construct null-terminated array for arguments
+
+  [ Jon Parise ]
+  * termio: revise macOS-specific .hushlogin note
+
+  [ mitchellh ]
+  * deps: Update iTerm2 color schemes
+
+  [ Damien Mehala ]
+  * fix: quick terminal hidden by macos menu bar
+
+  [ Bruno Bachmann ]
+  * Fix typo in binding comments
+
+  [ Jon Parise ]
+  * bash: revert automatic shell integration changes
+
+  [ otomist ]
+  * use whitespace instead of new flag for selecting full line
+
+  [ julia ]
+  * render consecutive shaders to the fbo
+
+  [ Andrej Daskalov ]
+  * added exec permission back to dolphin action
+
+  [ Qwerasd ]
+  * fix(renderer): clip terminal contents to expected grid size (#4523)
+
+  [ Ryan Liptak ]
+  * unigen: Remove libc dependency, use ArenaAllocator
+
+  [ m154k1 ]
+  * Fix sudo fish shell integration
+
+  [ Bryan Lee ]
+  * Prevent hyperlink hover state when mouse is outside viewport
+
+  [ Mitchell Hashimoto ]
+  * apprt/gtk: fundamentally rework input method handling
+
+  [ Eric Eastwood ]
+  * Switch default key bindings to include on and offscreen contents
+
+  [ Mitchell Hashimoto ]
+  * apprt/gtk: ibus activation should not encode keys
+
+  [ Jon Parise ]
+  * bash: handle additional command arguments
+
+  [ Mitchell Hashimoto ]
+  * apprt/gtk: when text is committed, end the preedit state
+
+  [ Jeffrey C. Ollie ]
+  * build: options to enable/disable terminfo & termcap install
+
+  [ Julia ]
+  * use main buffer and copy data to fbo texture (opengl) (#5294)
+
+  [ Qwerasd ]
+  * macOS: prevent native window drag by top region when titlebar hidden
+
+  [ Mitchell Hashimoto ]
+  * cli: allow renaming config fields to maintain backwards compatibility
+
+  [ Adam Wolf ]
+  * fix: gtk titlebar being restored if it shouldn't be
+  * fix: also respect gtk-titlebar value in fullscreened callback
+
+  [ Mitchell Hashimoto ]
+  * apprt/gtk: we should only show the headerbar again if csd
+
+  [ Leah Amelia Chen ]
+  * gtk: request initial color scheme asynchronously
+
+  [ Mitchell Hashimoto ]
+  * config: rename adw-toasts to app-notifications
+
+  [ Anund ]
+  * documentation: consistent format for actions help
+  * docs: generate mdx file for cli actions
+
+  [ Qwerasd ]
+  * fix(Metal): always render explicit background colors fully opaque
+
+  [ Mitchell Hashimoto ]
+  * Revert "build: options to enable/disable terminfo & termcap install"
+  * Prevent fd leaks to the running shell or command
+
+  [ Erlend Lind Madsen ]
+  * Docs: improve doc structure for action bindings with args and examples
+  * fmt
+
+  [ Jeffrey C. Ollie ]
+  * build: options to enable/disable terminfo & termcap install (take 2)
+  * only the cp step needs to depend on the mkdir step
+  * fix missing check of emit_termcap build option
+
+  [ Erlend Lind Madsen ]
+  * Docs: remove type from action arguments
+
+  [ Mitchell Hashimoto ]
+  * termio/exec: if pty fd HUP, end read thread
+
+  [ Daniel Patterson ]
+  * Add chorded/sequenced keybinds to +list-keybinds output
+
+  [ Mitchell Hashimoto ]
+  * Update libxev to fix zombie processes on macOS
+  * Ignore SIGPIPE
+  * macos: autohide dock if quick terminal would conflict with it
+  * macos: hide dock globally if the dock conflicts
+
+  [ Daniel Patterson ]
+  * Fix cmd+triple click not selecting full output
+  * Change ifs to exhaustive switches
+
+  [ Qwerasd ]
+  * fix(renderer/Metal): properly load cursor color
+  * renderer/Metal: improve linear blending correction
+  * cleanup: rename `text-blending` to `alpha-blending`
+
+  [ Daniel Fox ]
+  * Fix older adwaita tab bars at top of window
+
+  [ Lee Marlow ]
+  * Remove if check that was left in after change to exhaustive switch
+
+  [ Mitchell Hashimoto ]
+  * apprt/gtk: set key modifier flag if physical modifier key is pressed
+  * input: performable bindings aren't part of the reverse mapping
+  * dist: remove cdata tags from appcast, we escape it all
+  * ci: separate publish and release workflows
+  * next version will be 1.1.0
+
+  [ Jeffrey C. Ollie ]
+  * nix: use --system build flag instead of relying on $ZIG_GLOBAL_CACHE_DIR
+  * nix: fix Ghostty homepage in package
+
+  [ Leah Amelia Chen ]
+  * gtk(x11): update blur region upon syncAppearance
+
+  [ Mitchell Hashimoto ]
+  * ci: update publish job
+  * update version for development
+
+  [ Leah Amelia Chen ]
+  * gtk(wayland): respect window-decoration=none on GNOME
+
+  [ Jeffrey C. Ollie ]
+  * linux: fix installation path of nautilus-python extension
+
+  [ mitchellh ]
+  * deps: Update iTerm2 color schemes
+
+  [ rhodes-b ]
+  * fix errno handle
+  * comment on why to not use posix.errno
+
+  [ Kat ]
+  * Fix a typo in the docs for `adjust-strikethrough-position` and `adjust-overline-position`
+
+  [ Mitchell Hashimoto ]
+  * apprt/gtk: handle input methods that end preedit before commit
+
+  [ Leah Amelia Chen ]
+  * gtk(x11): support server-side decorations
+  * config: mention X11 support in window-decoration docs
+
+  [ Jeffrey C. Ollie ]
+  * core: add explicit errors to src/os/env.zig
+  * core: handle src/os/env.zig errors on windows
+  * core: fix puralization of src/os/env.zig Errors->Error
+  * core: add explicit errors to src/pty.zig
+  * core: fix up pty Zig error sets
+  * linux: ensure that group dir fd is closed
+
+  [ Mitchell Hashimoto ]
+  * macOS: binding checks should never trigger preedit callbacks
+
+  [ Shaps Benkau ]
+  * Toggling visibility is now ignored when in fullscreen mode.
+
+  [ Bryan Lee ]
+  * Fix cursor character not visible when cursor color matches background
+
+  [ Leah Amelia Chen ]
+  * gtk: remove CSD styling when CSDs aren't used
+
+  [ Kat ]
+  * Add a final newline to "No crash reports!"
+
+  [ Ofir Levitan ]
+  * GTK: disable color management
+
+  [ Mitchell Hashimoto ]
+  * macos: update Sparkle to 2.6.4 to workaround security issue
+
+  [ eifr ]
+  * move color-mgmt to config
+  * expand comment + rename
+
+  [ Mitchell Hashimoto ]
+  * Introduce subsystem maintainers via CODEOWNERS
+
+  [ eifr ]
+  * remove config
+  * add comments
+  * update gtk version
+
+  [ Qwerasd ]
+  * Metal: use "Managed" resource storage mode on discrete GPUs
+
+  [ Jeffrey C. Ollie ]
+  * core: protect against crashes and hangs when themes are not files
+
+  [ Qwerasd ]
+  * fix(Metal): don't throw away glyphs when the fg and bg colors match
+  * fix(terminal): handle errors in Screen.adjustCapacity
+  * fix(terminal): properly invalidate over-sized OSCs
+
+  [ Leah Amelia Chen ]
+  * gtk: introduce Zig bindings for GTK/GObject
+
+  [ Qwerasd ]
+  * test(terminal/osc): fix command longer than buffer test
+  * test(terminal/screen): OOM handling in adjustCapacity
+  * fix(terminal): properly lookup hyperlinks when cloning rows across pages
+  * test(terminal/screen): cursorSetHyperlink OOM handling edge case
+
+  [ Jeffrey C. Ollie ]
+  * nix: use zig2nix to manage nix cache/deps
+
+  [ Mitchell Hashimoto ]
+  * macos: toggle_visibility fullscreen check requires active app
+  * macos: ensure previously key window regains key on toggle_visibility
+
+  [ Qwerasd ]
+  * fix(terminal): avoid Screen.reset causing use of undefined
+
+  [ Bryan Lee ]
+  * Remember last focused window position for next startup
+  * Fix confirm-close-surface not working for hidden quick terminal
+
+  [ Mitchell Hashimoto ]
+  * Revert "Fixed documentation generation in `list-actions --docs` command (#4974)"
+
+  [ Leah Amelia Chen ]
+  * gtk(x11): set `WINDOWID` env var for subprocesses
+
+  [ Bryan Lee ]
+  * Refactor keybinding actions reference generation
+
+  [ Mitchell Hashimoto ]
+  * macos: add a variety of artist-drawn alternate icons
+
+  [ Jeffrey C. Ollie ]
+  * core: performAction now returns a bool
+  * gtk: make goto_split a performable action
+  * gtk: make previous_tab, next_tab, last_tab, and goto_tab performable
+
+  [ Mitchell Hashimoto ]
+  * apprt/embedded: make performAction return the performable state
+  * apprt/gtk: some stylistic changes
+  * apprt/glfw: return false for unimplemented actions
+
+  [ azhn ]
+  * gtk: Point right-click context menu exactly at cursor to improve behaviour at edges and closeness to cursor
+  * Revert "gtk: Point right-click context menu exactly at cursor to improve behaviour at edges and closeness to cursor"
+  * gtk: fix context menu computed location
+
+  [ Jeffrey C. Ollie ]
+  * macOS: fix iOS build breakage from #5644
+  * macOS: use Nix to get Zig deps
+
+  [ Mitchell Hashimoto ]
+  * termio: free envmap when able, fix memory leak
+
+  [ Jeffrey C. Ollie ]
+  * gtk: use the standard path for including Adwaita header file
+
+  [ Mitchell Hashimoto ]
+  * terminal: reflow the saved cursor if we have one
+
+  [ Jeffrey C. Ollie ]
+  * gtk: add support for using GTK Builder UI files and Blueprints
+  * gtk: fix ui/blueprint builder
+
+  [ Bryan Lee ]
+  * Eliminate tab content flickering during tab movement on macOS
+
+  [ Jeffrey C. Ollie ]
+  * macOS: update additional references to Sparkle 2.6.3->2.6.4
+
+  [ nick black ]
+  * Implement draw_octant() and yQuads() for U16.0
+
+  [ Mitchell Hashimoto ]
+  * build: replace codeberg dep with self-hosted mirror
+  * macos: don't remove ctrl modifier for text input
+  * macos: make goto_split, goto_tab, and move_tab performable
+  * apprt: require envmap for exec-based termio
+  * up all the metadata to 1.1.2
+  * Revert "macos: don't remove ctrl modifier for text input"
+  * apprt/embedded: proper consumed modifier state for ctrl keys
+  * up versions for development
+  * apprt/gtk: make GL context current in unrealize
+  * update build.zig.zon.nix
+
+  [ Maciej Bartczak ]
+  * gtk: update the window title when grabbing tab focus
+
+  [ David Wales ]
+  * gtk: work around oversized drag handle for GtkPaned
+
+  [ Tim Culverhouse ]
+  * termio: prevent responses to non-query OSC 21 sequences
+  * termio: use modified backend
+
+  [ rhodes-b ]
+  * dont use shift+equal combo
+
+  [ Mitchell Hashimoto ]
+  * terminal: increase CSI max params to 24 to accept Kakoune sequence
+
+  [ Qwerasd ]
+  * fix(Metal): force a full rebuild in `setFontGrid`
+
+  [ Mitchell Hashimoto ]
+  * apprt/gtk: any preedit change should note a composing state
+  * apprt/embedded: utf8 encoding buffer lifetime must extend beyond call
+
+  [ Bryan Lee ]
+  * Make `equalize_splits` action only affect current window
+
+  [ Jeffrey C. Ollie ]
+  * gtk: ensure that the content scale is always positive
+
+  [ Mikhail Borisov ]
+  * Fix Terminal Inspector option turns inactive if toggled in the Quick Terminal
+
+  [ Yappaholic ]
+  * Fix elvish sudo integration and update documentation
+
+  [ Bryan Lee ]
+  * Fix new window focus when quick terminal is open
+
+  [ Aaron Ruan ]
+  * fix: use surfaceConfig.backgroundColor to determine if the theme is light or dark
+
+  [ Mitchell Hashimoto ]
+  * Add back `fetch-zig-cache.sh` for packaging
+
+  [ Jeffrey C. Ollie ]
+  * build: generate a build.zig.zon.txt file for easy zig fetch scripting
+
+  [ Mitchell Hashimoto ]
+  * PACKAGING.md: remove the note about 1.1.0/1.1.1/1.1.2
+
+ -- Clay Risser <clay@clayrisser.com>  Sat, 05 Jul 2025 07:28:47 -0500
