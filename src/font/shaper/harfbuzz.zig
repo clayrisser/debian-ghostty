@@ -3,6 +3,10 @@ const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const harfbuzz = @import("harfbuzz");
 const font = @import("../main.zig");
+const terminal = @import("../../terminal/main.zig");
+const Feature = font.shape.Feature;
+const FeatureList = font.shape.FeatureList;
+const default_features = font.shape.default_features;
 const Face = font.Face;
 const Collection = font.Collection;
 const DeferredFace = font.DeferredFace;
@@ -10,7 +14,6 @@ const Library = font.Library;
 const SharedGrid = font.SharedGrid;
 const Style = font.Style;
 const Presentation = font.Presentation;
-const terminal = @import("../../terminal/main.zig");
 
 const log = std.log.scoped(.font_shaper);
 
@@ -27,38 +30,37 @@ pub const Shaper = struct {
     cell_buf: CellBuf,
 
     /// The features to use for shaping.
-    hb_feats: FeatureList,
+    hb_feats: []harfbuzz.Feature,
 
     const CellBuf = std.ArrayListUnmanaged(font.shape.Cell);
-    const FeatureList = std.ArrayListUnmanaged(harfbuzz.Feature);
-
-    // These features are hardcoded to always be on by default. Users
-    // can turn them off by setting the features to "-liga" for example.
-    const hardcoded_features = [_][]const u8{ "dlig", "liga" };
 
     /// The cell_buf argument is the buffer to use for storing shaped results.
     /// This should be at least the number of columns in the terminal.
     pub fn init(alloc: Allocator, opts: font.shape.Options) !Shaper {
-        // Parse all the features we want to use. We use
-        var hb_feats = hb_feats: {
-            var list = try FeatureList.initCapacity(alloc, opts.features.len + hardcoded_features.len);
-            errdefer list.deinit(alloc);
-
-            for (hardcoded_features) |name| {
-                if (harfbuzz.Feature.fromString(name)) |feat| {
-                    try list.append(alloc, feat);
-                } else log.warn("failed to parse font feature: {s}", .{name});
+        // Parse all the features we want to use.
+        const hb_feats = hb_feats: {
+            var feature_list: FeatureList = .{};
+            defer feature_list.deinit(alloc);
+            try feature_list.features.appendSlice(alloc, &default_features);
+            for (opts.features) |feature_str| {
+                try feature_list.appendFromString(alloc, feature_str);
             }
 
-            for (opts.features) |name| {
-                if (harfbuzz.Feature.fromString(name)) |feat| {
-                    try list.append(alloc, feat);
-                } else log.warn("failed to parse font feature: {s}", .{name});
+            var list = try alloc.alloc(harfbuzz.Feature, feature_list.features.items.len);
+            errdefer alloc.free(list);
+
+            for (feature_list.features.items, 0..) |feature, i| {
+                list[i] = .{
+                    .tag = std.mem.nativeToBig(u32, @bitCast(feature.tag)),
+                    .value = feature.value,
+                    .start = harfbuzz.c.HB_FEATURE_GLOBAL_START,
+                    .end = harfbuzz.c.HB_FEATURE_GLOBAL_END,
+                };
             }
 
             break :hb_feats list;
         };
-        errdefer hb_feats.deinit(alloc);
+        errdefer alloc.free(hb_feats);
 
         return Shaper{
             .alloc = alloc,
@@ -71,7 +73,7 @@ pub const Shaper = struct {
     pub fn deinit(self: *Shaper) void {
         self.hb_buf.destroy();
         self.cell_buf.deinit(self.alloc);
-        self.hb_feats.deinit(self.alloc);
+        self.alloc.free(self.hb_feats);
     }
 
     pub fn endFrame(self: *const Shaper) void {
@@ -125,10 +127,10 @@ pub const Shaper = struct {
                 // If we are disabling default font features we just offset
                 // our features by the hardcoded items because always
                 // add those at the beginning.
-                break :i hardcoded_features.len;
+                break :i default_features.len;
             };
 
-            harfbuzz.shape(face.hb_font, self.hb_buf, self.hb_feats.items[i..]);
+            harfbuzz.shape(face.hb_font, self.hb_buf, self.hb_feats[i..]);
         }
 
         // If our buffer is empty, we short-circuit the rest of the work

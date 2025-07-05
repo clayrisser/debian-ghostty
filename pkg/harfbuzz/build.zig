@@ -14,7 +14,6 @@ pub fn build(b: *std.Build) !void {
         .@"enable-libpng" = true,
     });
     const macos = b.dependency("macos", .{ .target = target, .optimize = optimize });
-    const upstream = b.dependency("harfbuzz", .{});
 
     const module = b.addModule("harfbuzz", .{
         .root_source_file = b.path("main.zig"),
@@ -26,6 +25,66 @@ pub fn build(b: *std.Build) !void {
         },
     });
 
+    // For dynamic linking, we prefer dynamic linking and to search by
+    // mode first. Mode first will search all paths for a dynamic library
+    // before falling back to static.
+    const dynamic_link_opts: std.Build.Module.LinkSystemLibraryOptions = .{
+        .preferred_link_mode = .dynamic,
+        .search_strategy = .mode_first,
+    };
+
+    const test_exe = b.addTest(.{
+        .name = "test",
+        .root_source_file = b.path("main.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    {
+        var it = module.import_table.iterator();
+        while (it.next()) |entry| test_exe.root_module.addImport(entry.key_ptr.*, entry.value_ptr.*);
+        if (b.systemIntegrationOption("freetype", .{})) {
+            test_exe.linkSystemLibrary2("freetype2", dynamic_link_opts);
+        } else {
+            test_exe.linkLibrary(freetype.artifact("freetype"));
+        }
+        const tests_run = b.addRunArtifact(test_exe);
+        const test_step = b.step("test", "Run tests");
+        test_step.dependOn(&tests_run.step);
+    }
+
+    if (b.systemIntegrationOption("harfbuzz", .{})) {
+        module.linkSystemLibrary("harfbuzz", dynamic_link_opts);
+        test_exe.linkSystemLibrary2("harfbuzz", dynamic_link_opts);
+    } else {
+        const lib = try buildLib(b, module, .{
+            .target = target,
+            .optimize = optimize,
+
+            .coretext_enabled = coretext_enabled,
+            .freetype_enabled = freetype_enabled,
+
+            .dynamic_link_opts = dynamic_link_opts,
+        });
+
+        test_exe.linkLibrary(lib);
+    }
+}
+
+fn buildLib(b: *std.Build, module: *std.Build.Module, options: anytype) !*std.Build.Step.Compile {
+    const target = options.target;
+    const optimize = options.optimize;
+
+    const coretext_enabled = options.coretext_enabled;
+    const freetype_enabled = options.freetype_enabled;
+
+    const freetype = b.dependency("freetype", .{
+        .target = target,
+        .optimize = optimize,
+        .@"enable-libpng" = true,
+    });
+
+    const upstream = b.dependency("harfbuzz", .{});
     const lib = b.addStaticLibrary(.{
         .name = "harfbuzz",
         .target = target,
@@ -41,13 +100,7 @@ pub fn build(b: *std.Build) !void {
         try apple_sdk.addPaths(b, module);
     }
 
-    // For dynamic linking, we prefer dynamic linking and to search by
-    // mode first. Mode first will search all paths for a dynamic library
-    // before falling back to static.
-    const dynamic_link_opts: std.Build.Module.LinkSystemLibraryOptions = .{
-        .preferred_link_mode = .dynamic,
-        .search_strategy = .mode_first,
-    };
+    const dynamic_link_opts = options.dynamic_link_opts;
 
     var flags = std.ArrayList([]const u8).init(b.allocator);
     defer flags.deinit();
@@ -102,20 +155,5 @@ pub fn build(b: *std.Build) !void {
 
     b.installArtifact(lib);
 
-    {
-        const test_exe = b.addTest(.{
-            .name = "test",
-            .root_source_file = b.path("main.zig"),
-            .target = target,
-            .optimize = optimize,
-        });
-        test_exe.linkLibrary(lib);
-
-        var it = module.import_table.iterator();
-        while (it.next()) |entry| test_exe.root_module.addImport(entry.key_ptr.*, entry.value_ptr.*);
-        test_exe.linkLibrary(freetype.artifact("freetype"));
-        const tests_run = b.addRunArtifact(test_exe);
-        const test_step = b.step("test", "Run tests");
-        test_step.dependOn(&tests_run.step);
-    }
+    return lib;
 }

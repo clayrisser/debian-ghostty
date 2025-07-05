@@ -220,7 +220,7 @@ pub fn init(self: *Termio, alloc: Allocator, opts: termio.Options) !void {
         .renderer_mailbox = opts.renderer_mailbox,
         .surface_mailbox = opts.surface_mailbox,
         .size = opts.size,
-        .backend = opts.backend,
+        .backend = backend,
         .mailbox = opts.mailbox,
         .terminal_stream = .{
             .handler = handler,
@@ -465,6 +465,9 @@ pub fn clearScreen(self: *Termio, td: *ThreadData, history: bool) !void {
         // knowledge of where the cursor is and causes rendering issues. So,
         // for alt screen, we do nothing.
         if (self.terminal.active_screen == .alternate) return;
+
+        // Clear our selection
+        self.terminal.screen.clearSelection();
 
         // Clear our scrollback
         if (history) self.terminal.eraseDisplay(.scrollback, false);

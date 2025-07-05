@@ -143,6 +143,8 @@ const Window = struct {
         c.gtk_window_set_title(gtk_window, "Ghostty: Terminal Inspector");
         c.gtk_window_set_default_size(gtk_window, 1000, 600);
         c.gtk_window_set_icon_name(gtk_window, build_config.bundle_id);
+        c.gtk_widget_add_css_class(@ptrCast(@alignCast(gtk_window)), "window");
+        c.gtk_widget_add_css_class(@ptrCast(@alignCast(gtk_window)), "inspector-window");
 
         // Initialize our imgui widget
         try self.imgui_widget.init();

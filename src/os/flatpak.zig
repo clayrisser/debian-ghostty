@@ -2,6 +2,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const builtin = @import("builtin");
+const posix = std.posix;
 
 const log = std.log.scoped(.flatpak);
 
@@ -26,7 +27,7 @@ pub fn isFlatpak() bool {
 ///
 /// Requires GIO, GLib to be available and linked.
 pub const FlatpakHostCommand = struct {
-    const fd_t = std.os.fd_t;
+    const fd_t = posix.fd_t;
     const EnvMap = std.process.EnvMap;
     const c = @cImport({
         @cInclude("gio/gio.h");
@@ -264,16 +265,12 @@ pub const FlatpakHostCommand = struct {
         }
 
         // Build our args
-        const args_ptr = c.g_ptr_array_new();
-        {
-            errdefer _ = c.g_ptr_array_free(args_ptr, 1);
-            for (self.argv) |arg| {
-                const argZ = try arena.dupeZ(u8, arg);
-                c.g_ptr_array_add(args_ptr, argZ.ptr);
-            }
+        const args = try arena.alloc(?[*:0]u8, self.argv.len + 1);
+        for (0.., self.argv) |i, arg| {
+            const argZ = try arena.dupeZ(u8, arg);
+            args[i] = argZ.ptr;
         }
-        const args = c.g_ptr_array_free(args_ptr, 0);
-        defer c.g_free(@as(?*anyopaque, @ptrCast(args)));
+        args[args.len - 1] = null;
 
         // Get the cwd in case we don't have ours set. A small optimization
         // would be to do this only if we need it but this isn't a
@@ -285,7 +282,7 @@ pub const FlatpakHostCommand = struct {
         const params = c.g_variant_new(
             "(^ay^aay@a{uh}@a{ss}u)",
             @as(*const anyopaque, if (self.cwd) |*cwd| cwd.ptr else g_cwd),
-            args,
+            args.ptr,
             c.g_variant_builder_end(fd_builder),
             c.g_variant_builder_end(env_builder),
             @as(c_int, 0),

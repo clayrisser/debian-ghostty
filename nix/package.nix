@@ -2,6 +2,7 @@
   lib,
   stdenv,
   bzip2,
+  callPackage,
   expat,
   fontconfig,
   freetype,
@@ -10,13 +11,11 @@
   oniguruma,
   zlib,
   libGL,
-  libX11,
-  libXcursor,
-  libXi,
-  libXrandr,
   glib,
   gtk4,
+  gobject-introspection,
   libadwaita,
+  blueprint-compiler,
   wrapGAppsHook4,
   gsettings-desktop-schemas,
   git,
@@ -26,6 +25,15 @@
   pandoc,
   revision ? "dirty",
   optimize ? "Debug",
+  enableX11 ? true,
+  libX11,
+  libXcursor,
+  libXi,
+  libXrandr,
+  enableWayland ? true,
+  wayland,
+  wayland-protocols,
+  wayland-scanner,
 }: let
   # The Zig hook has no way to select the release type without actual
   # overriding of the default flags.
@@ -35,92 +43,52 @@
   # ultimately acted on and has made its way to a nixpkgs implementation, this
   # can probably be removed in favor of that.
   zig_hook = zig_0_13.hook.overrideAttrs {
-    zig_default_flags = "-Dcpu=baseline -Doptimize=${optimize}";
-  };
-
-  # We limit source like this to try and reduce the amount of rebuilds as possible
-  # thus we only provide the source that is needed for the build
-  #
-  # NOTE: as of the current moment only linux files are provided,
-  # since darwin support is not finished
-  src = lib.fileset.toSource {
-    root = ../.;
-    fileset = lib.fileset.intersection (lib.fileset.fromSource (lib.sources.cleanSource ../.)) (
-      lib.fileset.unions [
-        ../dist/linux
-        ../conformance
-        ../images
-        ../include
-        ../pkg
-        ../src
-        ../vendor
-        ../build.zig
-        ../build.zig.zon
-        ./build-support/fetch-zig-cache.sh
-      ]
-    );
-  };
-
-  # This hash is the computation of the zigCache fixed-output derivation. This
-  # allows us to use remote package dependencies without breaking the sandbox.
-  #
-  # This will need updating whenever dependencies get updated (e.g. changes are
-  # made to zig.build.zon). If you see that the main build is trying to reach
-  # out to the internet and failing, this is likely the cause. Change this
-  # value back to lib.fakeHash, and re-run. The build failure should emit the
-  # updated hash, which of course, should be validated before updating here.
-  #
-  # (It's also possible that you might see a hash mismatch - without the
-  # network errors - if you don't have a previous instance of the cache
-  # derivation in your store already. If so, just update the value as above.)
-  zigCacheHash = import ./zigCacheHash.nix;
-
-  zigCache = stdenv.mkDerivation {
-    inherit src;
-    name = "ghostty-cache";
-    nativeBuildInputs = [
-      git
-      zig_hook
-    ];
-
-    dontConfigure = true;
-    dontUseZigBuild = true;
-    dontUseZigInstall = true;
-    dontFixup = true;
-
-    buildPhase = ''
-      runHook preBuild
-
-      sh ./nix/build-support/fetch-zig-cache.sh
-
-      runHook postBuild
-    '';
-
-    installPhase = ''
-      runHook preInstall
-
-      cp -r --reflink=auto $ZIG_GLOBAL_CACHE_DIR $out
-
-      runHook postInstall
-    '';
-
-    outputHashMode = "recursive";
-    outputHash = zigCacheHash;
+    zig_default_flags = "-Dcpu=baseline -Doptimize=${optimize} --color off";
   };
 in
   stdenv.mkDerivation (finalAttrs: {
     pname = "ghostty";
-    version = "1.0.0";
-    inherit src;
+    version = "1.1.3";
 
-    nativeBuildInputs = [
-      git
-      ncurses
-      pandoc
-      pkg-config
-      zig_hook
-      wrapGAppsHook4
-    ];
+    # We limit source like this to try and reduce the amount of rebuilds as possible
+    # thus we only provide the source that is needed for the build
+    #
+    # NOTE: as of the current moment only linux files are provided,
+    # since darwin support is not finished
+    src = lib.fileset.toSource {
+      root = ../.;
+      fileset = lib.fileset.intersection (lib.fileset.fromSource (lib.sources.cleanSource ../.)) (
+        lib.fileset.unions [
+          ../dist/linux
+          ../images
+          ../include
+          ../pkg
+          ../src
+          ../vendor
+          ../build.zig
+          ../build.zig.zon
+          ../build.zig.zon.nix
+        ]
+      );
+    };
+
+    deps = callPackage ../build.zig.zon.nix {name = "ghostty-cache-${finalAttrs.version}";};
+
+    nativeBuildInputs =
+      [
+        git
+        ncurses
+        pandoc
+        pkg-config
+        zig_hook
+        gobject-introspection
+        wrapGAppsHook4
+        blueprint-compiler
+      ]
+      ++ lib.optionals enableWayland [
+        wayland-scanner
+        wayland-protocols
+      ];
 
     buildInputs =
       [
@@ -136,28 +104,37 @@ in
         oniguruma
         zlib
 
-        libX11
-        libXcursor
-        libXi
-        libXrandr
-
         libadwaita
         gtk4
         glib
         gsettings-desktop-schemas
+      ]
+      ++ lib.optionals enableX11 [
+        libX11
+        libXcursor
+        libXi
+        libXrandr
+      ]
+      ++ lib.optionals enableWayland [
+        wayland
       ];
 
     dontConfigure = true;
 
-    zigBuildFlags = "-Dversion-string=${finalAttrs.version}-${revision}-nix";
+    zigBuildFlags = [
+      "--system"
+      "${finalAttrs.deps}"
+      "-Dversion-string=${finalAttrs.version}-${revision}-nix"
+      "-Dgtk-x11=${lib.boolToString enableX11}"
+      "-Dgtk-wayland=${lib.boolToString enableWayland}"
+    ];
 
-    preBuild = ''
-      rm -rf $ZIG_GLOBAL_CACHE_DIR
-      cp -r --reflink=auto ${zigCache} $ZIG_GLOBAL_CACHE_DIR
-      chmod u+rwX -R $ZIG_GLOBAL_CACHE_DIR
-    '';
-
-    outputs = ["out" "terminfo" "shell_integration" "vim"];
+    outputs = [
+      "out"
+      "terminfo"
+      "shell_integration"
+      "vim"
+    ];
 
     postInstall = ''
       terminfo_src=${
@@ -183,14 +160,13 @@ in
       echo "$vim" >> "$out/nix-support/propagated-user-env-packages"
     '';
 
-    postFixup = ''
-      patchelf --add-rpath "${lib.makeLibraryPath [libX11]}" "$out/bin/.ghostty-wrapped"
-    '';
-
     meta = {
-      homepage = "https://github.com/ghostty-org/ghostty";
+      homepage = "https://ghostty.org";
       license = lib.licenses.mit;
-      platforms = ["x86_64-linux" "aarch64-linux"];
+      platforms = [
+        "x86_64-linux"
+        "aarch64-linux"
+      ];
       mainProgram = "ghostty";
     };
   })

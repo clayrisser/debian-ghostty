@@ -42,6 +42,7 @@ wdth = "wdth"
 Strat = "Strat"
 grey = "gray"
 greyscale = "grayscale"
+DECID = "DECID"
 
 [type.swift.extend-words]
 inout = "inout"

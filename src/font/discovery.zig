@@ -551,7 +551,7 @@ pub const CoreText = struct {
         for (0..result.len) |i| {
             result[i] = list.getValueAtIndex(macos.text.FontDescriptor, i);
 
-            // We need to retain becauseonce the list is freed it will
+            // We need to retain because once the list is freed it will
             // release all its members.
             result[i].retain();
         }

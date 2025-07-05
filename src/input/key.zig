@@ -295,7 +295,7 @@ pub const Key = enum(c_int) {
     eight,
     nine,
 
-    // puncuation
+    // punctuation
     semicolon,
     space,
     apostrophe,
@@ -308,7 +308,7 @@ pub const Key = enum(c_int) {
     equal,
     left_bracket, // [
     right_bracket, // ]
-    backslash, // /
+    backslash, // \
 
     // control
     up,
@@ -411,7 +411,7 @@ pub const Key = enum(c_int) {
     /// may be from the number row or the keypad, but it always maps
     /// to '.zero'.
     ///
-    /// This is what we want, we awnt people to create keybindings that
+    /// This is what we want, we want people to create keybindings that
     /// are independent of the physical key.
     pub fn fromASCII(ch: u8) ?Key {
         return switch (ch) {
@@ -729,7 +729,9 @@ pub const Key = enum(c_int) {
         .{ '\t', .tab },
 
         // Keypad entries. We just assume keypad with the kp_ prefix
-        // so that has some special meaning. These must also always be last.
+        // so that has some special meaning. These must also always be last,
+        // so that our `fromASCII` function doesn't accidentally map them
+        // over normal numerics and other keys.
         .{ '0', .kp_0 },
         .{ '1', .kp_1 },
         .{ '2', .kp_2 },

@@ -3,13 +3,15 @@ const build_options = @import("build_options");
 const Allocator = std.mem.Allocator;
 const builtin = @import("builtin");
 const build_config = @import("../build_config.zig");
+const internal_os = @import("../os/main.zig");
 const xev = @import("xev");
 const renderer = @import("../renderer.zig");
 const gtk = if (build_config.app_runtime == .gtk) @import("../apprt/gtk/c.zig").c else void;
 
 pub const Options = struct {};
 
-/// The `version` command is used to display information about Ghostty.
+/// The `version` command is used to display information about Ghostty. Recognized as
+/// either `+version` or `--version`.
 pub fn run(alloc: Allocator) !u8 {
     _ = alloc;
 
@@ -37,6 +39,7 @@ pub fn run(alloc: Allocator) !u8 {
     try stdout.print("  - renderer   : {}\n", .{renderer.Renderer});
     try stdout.print("  - libxev     : {}\n", .{xev.backend});
     if (comptime build_config.app_runtime == .gtk) {
+        try stdout.print("  - desktop env: {s}\n", .{@tagName(internal_os.desktopEnvironment())});
         try stdout.print("  - GTK version:\n", .{});
         try stdout.print("    build      : {d}.{d}.{d}\n", .{
             gtk.GTK_MAJOR_VERSION,
@@ -60,6 +63,19 @@ pub fn run(alloc: Allocator) !u8 {
             });
         } else {
             try stdout.print("  - libadwaita : disabled\n", .{});
+        }
+        if (comptime build_options.x11) {
+            try stdout.print("  - libX11     : enabled\n", .{});
+        } else {
+            try stdout.print("  - libX11     : disabled\n", .{});
+        }
+
+        // We say `libwayland` since it is possible to build Ghostty without
+        // Wayland integration but with Wayland-enabled GTK
+        if (comptime build_options.wayland) {
+            try stdout.print("  - libwayland : enabled\n", .{});
+        } else {
+            try stdout.print("  - libwayland : disabled\n", .{});
         }
     }
     return 0;

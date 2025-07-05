@@ -1347,7 +1347,7 @@ pub const StreamHandler = struct {
             .foreground => {
                 self.foreground_color = null;
                 _ = self.renderer_mailbox.push(.{
-                    .foreground_color = self.default_foreground_color,
+                    .foreground_color = self.foreground_color,
                 }, .{ .forever = {} });
 
                 self.surfaceMessageWriter(.{ .color_change = .{
@@ -1358,7 +1358,7 @@ pub const StreamHandler = struct {
             .background => {
                 self.background_color = null;
                 _ = self.renderer_mailbox.push(.{
-                    .background_color = self.default_background_color,
+                    .background_color = self.background_color,
                 }, .{ .forever = {} });
 
                 self.surfaceMessageWriter(.{ .color_change = .{
@@ -1370,7 +1370,7 @@ pub const StreamHandler = struct {
                 self.cursor_color = null;
 
                 _ = self.renderer_mailbox.push(.{
-                    .cursor_color = self.default_cursor_color,
+                    .cursor_color = self.cursor_color,
                 }, .{ .forever = {} });
 
                 if (self.default_cursor_color) |color| {
@@ -1418,11 +1418,13 @@ pub const StreamHandler = struct {
         var buf = std.ArrayList(u8).init(self.alloc);
         defer buf.deinit();
         const writer = buf.writer();
-        try writer.writeAll("\x1b]21");
 
         for (request.list.items) |item| {
             switch (item) {
                 .query => |key| {
+                    // If the writer buffer is empty, we need to write our prefix
+                    if (buf.items.len == 0) try writer.writeAll("\x1b]21");
+
                     const color: terminal.color.RGB = switch (key) {
                         .palette => |palette| self.terminal.color_palette.colors[palette],
                         .special => |special| switch (special) {
@@ -1490,15 +1492,15 @@ pub const StreamHandler = struct {
                         const msg: renderer.Message = switch (special) {
                             .foreground => msg: {
                                 self.foreground_color = null;
-                                break :msg .{ .foreground_color = self.default_foreground_color };
+                                break :msg .{ .foreground_color = self.foreground_color };
                             },
                             .background => msg: {
                                 self.background_color = null;
-                                break :msg .{ .background_color = self.default_background_color };
+                                break :msg .{ .background_color = self.background_color };
                             },
                             .cursor => msg: {
                                 self.cursor_color = null;
-                                break :msg .{ .cursor_color = self.default_cursor_color };
+                                break :msg .{ .cursor_color = self.cursor_color };
                             },
                             else => {
                                 log.warn(
@@ -1517,14 +1519,16 @@ pub const StreamHandler = struct {
             }
         }
 
-        try writer.writeAll(request.terminator.string());
-
-        self.messageWriter(.{
-            .write_alloc = .{
-                .alloc = self.alloc,
-                .data = try buf.toOwnedSlice(),
-            },
-        });
+        // If we had any writes to our buffer, we queue them now
+        if (buf.items.len > 0) {
+            try writer.writeAll(request.terminator.string());
+            self.messageWriter(.{
+                .write_alloc = .{
+                    .alloc = self.alloc,
+                    .data = try buf.toOwnedSlice(),
+                },
+            });
+        }
 
         // Note: we don't have to do a queueRender here because every
         // processed stream will queue a render once it is done processing

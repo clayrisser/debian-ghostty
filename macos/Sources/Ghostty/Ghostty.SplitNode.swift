@@ -38,6 +38,15 @@ extension Ghostty {
             }
         }
 
+        /// Returns true if the tree is split.
+        var isSplit: Bool {
+            return if case .leaf = self {
+                false
+            } else {
+                true
+            }
+        }
+
         func topLeft() -> SurfaceView {
             switch (self) {
             case .leaf(let leaf):
@@ -51,7 +60,7 @@ extension Ghostty {
         /// Returns the view that would prefer receiving focus in this tree. This is always the
         /// top-left-most view. This is used when creating a split or closing a split to find the
         /// next view to send focus to.
-        func preferredFocus(_ direction: SplitFocusDirection = .top) -> SurfaceView {
+        func preferredFocus(_ direction: SplitFocusDirection = .up) -> SurfaceView {
             let container: Container
             switch (self) {
             case .leaf(let leaf):
@@ -64,10 +73,10 @@ extension Ghostty {
 
             let node: SplitNode
             switch (direction) {
-            case .previous, .top, .left:
+            case .previous, .up, .left:
                 node = container.bottomRight
 
-            case .next, .bottom, .right:
+            case .next, .down, .right:
                 node = container.topLeft
             }
 
@@ -120,14 +129,7 @@ extension Ghostty {
 
         /// Returns true if the split tree contains the given view.
         func contains(view: SurfaceView) -> Bool {
-            switch (self) {
-            case .leaf(let leaf):
-                return leaf.surface == view
-
-            case .split(let container):
-                return container.topLeft.contains(view: view) ||
-                    container.bottomRight.contains(view: view)
-            }
+            return leaf(for: view) != nil
         }
 
         /// Find a surface view by UUID.
@@ -161,6 +163,22 @@ extension Ghostty {
                     return container.topLeft.doesBorderTop(view: view) ||
                         container.bottomRight.doesBorderTop(view: view)
                 }
+            }
+        }
+
+        /// Return the node for the given view if its in the tree.
+        func leaf(for view: SurfaceView) -> Leaf? {
+            switch (self) {
+            case .leaf(let leaf):
+                if leaf.surface == view {
+                    return leaf
+                } else {
+                    return nil
+                }
+
+            case .split(let container):
+                return container.topLeft.leaf(for: view) ??
+                    container.bottomRight.leaf(for: view)
             }
         }
 
@@ -431,12 +449,12 @@ extension Ghostty {
         struct Neighbors {
             var left: SplitNode?
             var right: SplitNode?
-            var top: SplitNode?
-            var bottom: SplitNode?
+            var up: SplitNode?
+            var down: SplitNode?
 
             /// These are the previous/next nodes. It will certainly be one of the above as well
             /// but we keep track of these separately because depending on the split direction
-            /// of the containing node, previous may be left OR top (same for next).
+            /// of the containing node, previous may be left OR up (same for next).
             var previous: SplitNode?
             var next: SplitNode?
 
@@ -448,8 +466,8 @@ extension Ghostty {
                 let map: [SplitFocusDirection : KeyPath<Self, SplitNode?>] = [
                     .previous: \.previous,
                     .next: \.next,
-                    .top: \.top,
-                    .bottom: \.bottom,
+                    .up: \.up,
+                    .down: \.down,
                     .left: \.left,
                     .right: \.right,
                 ]

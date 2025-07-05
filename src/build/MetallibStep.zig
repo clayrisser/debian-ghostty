@@ -21,13 +21,13 @@ pub const Options = struct {
 step: *Step,
 output: LazyPath,
 
-pub fn create(b: *std.Build, opts: Options) *MetallibStep {
+pub fn create(b: *std.Build, opts: Options) ?*MetallibStep {
     const self = b.allocator.create(MetallibStep) catch @panic("OOM");
 
     const sdk = switch (opts.target.result.os.tag) {
         .macos => "macosx",
         .ios => "iphoneos",
-        else => @panic("unsupported metallib OS"),
+        else => return null,
     };
 
     const min_version = if (opts.target.query.os_version_min) |v|

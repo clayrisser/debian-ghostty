@@ -132,15 +132,6 @@ extension Ghostty {
             return v
         }
 
-        var windowColorspace: String {
-            guard let config = self.config else { return "" }
-            var v: UnsafePointer<Int8>? = nil
-            let key = "window-colorspace"
-            guard ghostty_config_get(config, &v, key, UInt(key.count)) else { return "" }
-            guard let ptr = v else { return "" }
-            return String(cString: ptr)
-        }
-
         var windowSaveState: String {
             guard let config = self.config else { return "" }
             var v: UnsafePointer<Int8>? = nil
@@ -148,6 +139,20 @@ extension Ghostty {
             guard ghostty_config_get(config, &v, key, UInt(key.count)) else { return "" }
             guard let ptr = v else { return "" }
             return String(cString: ptr)
+        }
+        
+        var windowPositionX: Int16? {
+            guard let config = self.config else { return nil }
+            var v: Int16 = 0
+            let key = "window-position-x"
+            return ghostty_config_get(config, &v, key, UInt(key.count)) ? v : nil
+        }
+        
+        var windowPositionY: Int16? {
+            guard let config = self.config else { return nil }
+            var v: Int16 = 0
+            let key = "window-position-y"
+            return ghostty_config_get(config, &v, key, UInt(key.count)) ? v : nil
         }
 
         var windowNewTabPosition: String {
@@ -160,11 +165,14 @@ extension Ghostty {
         }
 
         var windowDecorations: Bool {
-            guard let config = self.config else { return true }
-            var v = false;
+            let defaultValue = true
+            guard let config = self.config else { return defaultValue }
+            var v: UnsafePointer<Int8>? = nil
             let key = "window-decoration"
-            _ = ghostty_config_get(config, &v, key, UInt(key.count))
-            return v;
+            guard ghostty_config_get(config, &v, key, UInt(key.count)) else { return defaultValue }
+            guard let ptr = v else { return defaultValue }
+            let str = String(cString: ptr)
+            return WindowDecoration(rawValue: str)?.enabled() ?? defaultValue
         }
 
         var windowTheme: String? {
@@ -331,7 +339,7 @@ extension Ghostty {
         var backgroundBlurRadius: Int {
             guard let config = self.config else { return 1 }
             var v: Int = 0
-            let key = "background-blur-radius"
+            let key = "background-blur"
             _ = ghostty_config_get(config, &v, key, UInt(key.count))
             return v;
         }
@@ -361,13 +369,24 @@ extension Ghostty {
             )
         }
 
-        // This isn't actually a configurable value currently but it could be done day.
-        // We put it here because it is a color that changes depending on the configuration.
         var splitDividerColor: Color {
             let backgroundColor = OSColor(backgroundColor)
             let isLightBackground = backgroundColor.isLightColor
             let newColor = isLightBackground ? backgroundColor.darken(by: 0.08) : backgroundColor.darken(by: 0.4)
-            return Color(newColor)
+
+            guard let config = self.config else { return Color(newColor) }
+
+            var color: ghostty_config_color_s = .init();
+            let key = "split-divider-color"
+            if (!ghostty_config_get(config, &color, key, UInt(key.count))) {
+                return Color(newColor)
+            }
+
+            return .init(
+                red: Double(color.r) / 255,
+                green: Double(color.g) / 255,
+                blue: Double(color.b) / 255
+            )
         }
 
         #if canImport(AppKit)
@@ -406,6 +425,16 @@ extension Ghostty {
             _ = ghostty_config_get(config, &v, key, UInt(key.count))
             return v
         }
+
+        var quickTerminalSpaceBehavior: QuickTerminalSpaceBehavior {
+            guard let config = self.config else { return .move }
+            var v: UnsafePointer<Int8>? = nil
+            let key = "quick-terminal-space-behavior"
+            guard ghostty_config_get(config, &v, key, UInt(key.count)) else { return .move }
+            guard let ptr = v else { return .move }
+            let str = String(cString: ptr)
+            return QuickTerminalSpaceBehavior(fromGhosttyConfig: str) ?? .move
+        }
         #endif
 
         var resizeOverlay: ResizeOverlay {
@@ -437,15 +466,14 @@ extension Ghostty {
             return v;
         }
 
-        var autoUpdate: AutoUpdate {
-            let defaultValue = AutoUpdate.check
-            guard let config = self.config else { return defaultValue }
+        var autoUpdate: AutoUpdate? {
+            guard let config = self.config else { return nil }
             var v: UnsafePointer<Int8>? = nil
             let key = "auto-update"
-            guard ghostty_config_get(config, &v, key, UInt(key.count)) else { return defaultValue }
-            guard let ptr = v else { return defaultValue }
+            guard ghostty_config_get(config, &v, key, UInt(key.count)) else { return nil }
+            guard let ptr = v else { return nil }
             let str = String(cString: ptr)
-            return AutoUpdate(rawValue: str) ?? defaultValue
+            return AutoUpdate(rawValue: str)
         }
 
         var autoUpdateChannel: AutoUpdateChannel {
@@ -526,6 +554,20 @@ extension Ghostty.Config {
             switch (self) {
             case .top_right, .bottom_right: return true;
             default: return false;
+            }
+        }
+    }
+
+    enum WindowDecoration: String {
+        case none
+        case client
+        case server
+        case auto
+
+        func enabled() -> Bool {
+            switch self {
+            case .client, .server, .auto: return true
+            case .none: return false
             }
         }
     }

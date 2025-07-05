@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import CoreText
 import UserNotifications
@@ -12,7 +13,14 @@ extension Ghostty {
         // The current title of the surface as defined by the pty. This can be
         // changed with escape codes. This is public because the callbacks go
         // to the app level and it is set from there.
-        @Published private(set) var title: String = "👻"
+        @Published private(set) var title: String = "" {
+            didSet {
+                if !title.isEmpty {
+                    titleFallbackTimer?.invalidate()
+                    titleFallbackTimer = nil
+                }
+            }
+        }
 
         // The current pwd of the surface as defined by the pty. This can be
         // changed with escape codes.
@@ -113,6 +121,12 @@ extension Ghostty {
         // A small delay that is introduced before a title change to avoid flickers
         private var titleChangeTimer: Timer?
 
+        // A timer to fallback to ghost emoji if no title is set within the grace period
+        private var titleFallbackTimer: Timer?
+
+        /// Event monitor (see individual events for why)
+        private var eventMonitor: Any? = nil
+
         // We need to support being a first responder so that we can get input events
         override var acceptsFirstResponder: Bool { return true }
 
@@ -135,6 +149,13 @@ extension Ghostty {
             // is non-zero so that our layer bounds are non-zero so that our renderer
             // can do SOMETHING.
             super.init(frame: NSMakeRect(0, 0, 800, 600))
+
+            // Set a timer to show the ghost emoji after 500ms if no title is set
+            titleFallbackTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false) { [weak self] _ in
+                if let self = self, self.title.isEmpty {
+                    self.title = "👻"
+                }
+            }
 
             // Before we initialize the surface we want to register our notifications
             // so there is no window where we can't receive them.
@@ -170,6 +191,15 @@ extension Ghostty {
                 name: NSWindow.didChangeScreenNotification,
                 object: nil)
 
+            // Listen for local events that we need to know of outside of
+            // single surface handlers.
+            self.eventMonitor = NSEvent.addLocalMonitorForEvents(
+                matching: [
+                    // We need keyUp because command+key events don't trigger keyUp.
+                    .keyUp
+                ]
+            ) { [weak self] event in self?.localEventHandler(event) }
+
             // Setup our surface. This will also initialize all the terminal IO.
             let surface_cfg = baseConfig ?? SurfaceConfiguration()
             var surface_cfg_c = surface_cfg.ghosttyConfig(view: self)
@@ -201,6 +231,9 @@ extension Ghostty {
 
                 ghostty_surface_set_color_scheme(surface, scheme)
             }
+
+            // The UTTypes that can be dragged onto this view.
+            registerForDraggedTypes(Array(Self.dropTypes))
         }
 
         required init?(coder: NSCoder) {
@@ -211,6 +244,11 @@ extension Ghostty {
             // Remove all of our notificationcenter subscriptions
             let center = NotificationCenter.default
             center.removeObserver(self)
+
+            // Remove our event monitor
+            if let eventMonitor {
+                NSEvent.removeMonitor(eventMonitor)
+            }
 
             // Whenever the surface is removed, we need to note that our restorable
             // state is invalid to prevent the surface from being restored.
@@ -356,22 +394,52 @@ extension Ghostty {
             }
         }
 
+        // MARK: Local Events
+
+        private func localEventHandler(_ event: NSEvent) -> NSEvent? {
+            return switch event.type {
+            case .keyUp:
+                localEventKeyUp(event)
+
+            default:
+                event
+            }
+        }
+
+        private func localEventKeyUp(_ event: NSEvent) -> NSEvent? {
+            // We only care about events with "command" because all others will
+            // trigger the normal responder chain.
+            if (!event.modifierFlags.contains(.command)) { return event }
+
+            // Command keyUp events are never sent to the normal responder chain
+            // so we send them here.
+            guard focused else { return event }
+            self.keyUp(with: event)
+            return nil
+        }
+
         // MARK: - Notifications
 
         @objc private func onUpdateRendererHealth(notification: SwiftUI.Notification) {
             guard let healthAny = notification.userInfo?["health"] else { return }
             guard let health = healthAny as? ghostty_action_renderer_health_e else { return }
-            healthy = health == GHOSTTY_RENDERER_HEALTH_OK
+            DispatchQueue.main.async { [weak self] in
+                self?.healthy = health == GHOSTTY_RENDERER_HEALTH_OK
+            }
         }
 
         @objc private func ghosttyDidContinueKeySequence(notification: SwiftUI.Notification) {
             guard let keyAny = notification.userInfo?[Ghostty.Notification.KeySequenceKey] else { return }
             guard let key = keyAny as? Ghostty.KeyEquivalent else { return }
-            keySequence.append(key)
+            DispatchQueue.main.async { [weak self] in
+                self?.keySequence.append(key)
+            }
         }
 
         @objc private func ghosttyDidEndKeySequence(notification: SwiftUI.Notification) {
-            keySequence = []
+            DispatchQueue.main.async { [weak self] in
+                self?.keySequence = []
+            }
         }
 
         @objc private func ghosttyConfigDidChange(_ notification: SwiftUI.Notification) {
@@ -381,7 +449,9 @@ extension Ghostty {
             ] as? Ghostty.Config else { return }
 
             // Update our derived config
-            self.derivedConfig = DerivedConfig(config)
+            DispatchQueue.main.async { [weak self] in
+                self?.derivedConfig = DerivedConfig(config)
+            }
         }
 
         @objc private func ghosttyColorDidChange(_ notification: SwiftUI.Notification) {
@@ -391,7 +461,9 @@ extension Ghostty {
 
             switch (change.kind) {
             case .background:
-                self.backgroundColor = change.color
+                DispatchQueue.main.async { [weak self] in
+                    self?.backgroundColor = change.color
+                }
 
             default:
                 // We don't do anything for the other colors yet.
@@ -413,7 +485,9 @@ extension Ghostty {
             // We also just trigger a backing property change. Just in case the screen has
             // a different scaling factor, this ensures that we update our content scale.
             // Issue: https://github.com/ghostty-org/ghostty/issues/2731
-            viewDidChangeBackingProperties()
+            DispatchQueue.main.async { [weak self] in
+                self?.viewDidChangeBackingProperties()
+            }
         }
 
         // MARK: - NSView
@@ -605,11 +679,12 @@ extension Ghostty {
             let mods = Ghostty.ghosttyMods(event.modifierFlags)
             ghostty_surface_mouse_pos(surface, pos.x, frame.height - pos.y, mods)
 
-            // If focus follows mouse is enabled then move focus to this surface.
-            if let window = self.window as? TerminalWindow,
-               window.isKeyWindow &&
-                window.focusFollowsMouse &&
-                !self.focused
+            // Handle focus-follows-mouse
+            if let window,
+               let controller = window.windowController as? BaseTerminalController,
+               (window.isKeyWindow &&
+                    !self.focused &&
+                    controller.focusFollowsMouse)
             {
                 Ghostty.moveFocus(to: self)
             }
@@ -751,7 +826,22 @@ extension Ghostty {
             // know if these events cleared it.
             let markedTextBefore = markedText.length > 0
 
+            // We need to know the keyboard layout before below because some keyboard
+            // input events will change our keyboard layout and we don't want those
+            // going to the terminal.
+            let keyboardIdBefore: String? = if (!markedTextBefore) {
+                KeyboardLayout.id
+            } else {
+                nil
+            }
+
             self.interpretKeyEvents([translationEvent])
+
+            // If our keyboard changed from this we just assume an input method
+            // grabbed it and do nothing.
+            if (!markedTextBefore && keyboardIdBefore != KeyboardLayout.id) {
+                return
+            }
 
             // If we have text, then we've composed a character, send that down. We do this
             // first because if we completed a preedit, the text will be available here
@@ -760,7 +850,7 @@ extension Ghostty {
             if let list = keyTextAccumulator, list.count > 0 {
                 handled = true
                 for text in list {
-                    keyAction(action, event: event, text: text)
+                    _ = keyAction(action, event: event, text: text)
                 }
             }
 
@@ -770,38 +860,49 @@ extension Ghostty {
             // the preedit.
             if (markedText.length > 0 || markedTextBefore) {
                 handled = true
-                keyAction(action, event: event, preedit: markedText.string)
+                _ = keyAction(action, event: event, preedit: markedText.string)
             }
 
             if (!handled) {
                 // No text or anything, we want to handle this manually.
-                keyAction(action, event: event)
+                _ = keyAction(action, event: event)
             }
         }
 
         override func keyUp(with event: NSEvent) {
-            keyAction(GHOSTTY_ACTION_RELEASE, event: event)
+            _ = keyAction(GHOSTTY_ACTION_RELEASE, event: event)
         }
 
         /// Special case handling for some control keys
         override func performKeyEquivalent(with event: NSEvent) -> Bool {
-            // Only process key down events
-            if (event.type != .keyDown) {
+            switch (event.type) {
+            case .keyDown:
+                // Continue, we care about key down events
+                break
+
+            default:
+                // Any other key event we don't care about. I don't think its even
+                // possible to receive any other event type.
                 return false
             }
 
             // Only process events if we're focused. Some key events like C-/ macOS
             // appears to send to the first view in the hierarchy rather than the
             // the first responder (I don't know why). This prevents us from handling it.
+            // Besides C-/, its important we don't process key equivalents if unfocused
+            // because there are other event listeners for that (i.e. AppDelegate's
+            // local event handler).
             if (!focused) {
                 return false
             }
 
-            // Only process keys when Control is active. All known issues we're
-            // resolving happen only in this scenario. This probably isn't fully robust
-            // but we can broaden the scope as we find more cases.
-            if (!event.modifierFlags.contains(.control)) {
-                return false
+            // If this event as-is would result in a key binding then we send it.
+            if let surface,
+               ghostty_surface_key_is_binding(
+                  surface,
+                  event.ghosttyKeyEvent(GHOSTTY_ACTION_PRESS)) {
+                self.keyDown(with: event)
+                return true
             }
 
             let equivalent: String
@@ -819,14 +920,25 @@ extension Ghostty {
             case "\r":
                 // Pass C-<return> through verbatim
                 // (prevent the default context menu equivalent)
+                if (!event.modifierFlags.contains(.control)) {
+                    return false
+                }
+
                 equivalent = "\r"
+
+            case ".":
+                if (!event.modifierFlags.contains(.command)) {
+                    return false
+                }
+
+                equivalent = "."
 
             default:
                 // Ignore other events
                 return false
             }
 
-            let newEvent = NSEvent.keyEvent(
+            let finalEvent = NSEvent.keyEvent(
                 with: .keyDown,
                 location: event.locationInWindow,
                 modifierFlags: event.modifierFlags,
@@ -839,7 +951,7 @@ extension Ghostty {
                 keyCode: event.keyCode
             )
 
-            self.keyDown(with: newEvent!)
+            self.keyDown(with: finalEvent!)
             return true
         }
 
@@ -853,6 +965,9 @@ extension Ghostty {
             case 0x37, 0x36: mod = GHOSTTY_MODS_SUPER.rawValue
             default: return
             }
+
+            // If we're in the middle of a preedit, don't do anything with mods.
+            if hasMarkedText() { return }
 
             // The keyAction function will do this AGAIN below which sucks to repeat
             // but this is super cheap and flagsChanged isn't that common.
@@ -884,45 +999,38 @@ extension Ghostty {
                 }
             }
 
-            keyAction(action, event: event)
+            _ = keyAction(action, event: event)
         }
 
-        private func keyAction(_ action: ghostty_input_action_e, event: NSEvent) {
-            guard let surface = self.surface else { return }
-
-            var key_ev = ghostty_input_key_s()
-            key_ev.action = action
-            key_ev.mods = Ghostty.ghosttyMods(event.modifierFlags)
-            key_ev.keycode = UInt32(event.keyCode)
-            key_ev.text = nil
-            key_ev.composing = false
-            ghostty_surface_key(surface, key_ev)
+        private func keyAction(_ action: ghostty_input_action_e, event: NSEvent) -> Bool {
+            guard let surface = self.surface else { return false }
+            return ghostty_surface_key(surface, event.ghosttyKeyEvent(action))
         }
 
-        private func keyAction(_ action: ghostty_input_action_e, event: NSEvent, preedit: String) {
-            guard let surface = self.surface else { return }
+        private func keyAction(
+            _ action: ghostty_input_action_e,
+            event: NSEvent, preedit: String
+        ) -> Bool {
+            guard let surface = self.surface else { return false }
 
-            preedit.withCString { ptr in
-                var key_ev = ghostty_input_key_s()
-                key_ev.action = action
-                key_ev.mods = Ghostty.ghosttyMods(event.modifierFlags)
-                key_ev.keycode = UInt32(event.keyCode)
+            return preedit.withCString { ptr in
+                var key_ev = event.ghosttyKeyEvent(action)
                 key_ev.text = ptr
                 key_ev.composing = true
-                ghostty_surface_key(surface, key_ev)
+                return ghostty_surface_key(surface, key_ev)
             }
         }
 
-        private func keyAction(_ action: ghostty_input_action_e, event: NSEvent, text: String) {
-            guard let surface = self.surface else { return }
+        private func keyAction(
+            _ action: ghostty_input_action_e,
+            event: NSEvent, text: String
+        ) -> Bool {
+            guard let surface = self.surface else { return false }
 
-            text.withCString { ptr in
-                var key_ev = ghostty_input_key_s()
-                key_ev.action = action
-                key_ev.mods = Ghostty.ghosttyMods(event.modifierFlags)
-                key_ev.keycode = UInt32(event.keyCode)
+            return text.withCString { ptr in
+                var key_ev = event.ghosttyKeyEvent(action)
                 key_ev.text = ptr
-                ghostty_surface_key(surface, key_ev)
+                return ghostty_surface_key(surface, key_ev)
             }
         }
 
@@ -1035,6 +1143,14 @@ extension Ghostty {
         @IBAction func pasteAsPlainText(_ sender: Any?) {
             guard let surface = self.surface else { return }
             let action = "paste_from_clipboard"
+            if (!ghostty_surface_binding_action(surface, action, UInt(action.count))) {
+                AppDelegate.logger.warning("action failed action=\(action)")
+            }
+        }
+
+        @IBAction func pasteSelection(_ sender: Any?) {
+            guard let surface = self.surface else { return }
+            let action = "paste_from_selection"
             if (!ghostty_surface_binding_action(surface, action, UInt(action.count))) {
                 AppDelegate.logger.warning("action failed action=\(action)")
             }
@@ -1359,5 +1475,80 @@ extension Ghostty.SurfaceView: NSServicesMenuRequestor {
         }
 
         return true
+    }
+}
+
+// MARK: NSMenuItemValidation
+
+extension Ghostty.SurfaceView: NSMenuItemValidation {
+    func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        switch item.action {
+        case #selector(pasteSelection):
+            let pb = NSPasteboard.ghosttySelection
+            guard let str = pb.getOpinionatedStringContents() else { return false }
+            return !str.isEmpty
+
+        default:
+            return true
+        }
+    }
+}
+
+// MARK: NSDraggingDestination
+
+extension Ghostty.SurfaceView {
+    static let dropTypes: Set<NSPasteboard.PasteboardType> = [
+        .string,
+        .fileURL,
+        .URL
+    ]
+
+    override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
+        guard let types = sender.draggingPasteboard.types else { return [] }
+
+        // If the dragging object contains none of our types then we return none.
+        // This shouldn't happen because AppKit should guarantee that we only
+        // receive types we registered for but its good to check.
+        if Set(types).isDisjoint(with: Self.dropTypes) {
+            return []
+        }
+
+        // We use copy to get the proper icon
+        return .copy
+    }
+
+    override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
+        let pb = sender.draggingPasteboard
+
+        let content: String?
+        if let url = pb.string(forType: .URL) {
+            // URLs first, they get escaped as-is.
+            content = Ghostty.Shell.escape(url)
+        } else if let urls = pb.readObjects(forClasses: [NSURL.self]) as? [URL],
+           urls.count > 0 {
+            // File URLs next. They get escaped individually and then joined by a
+            // space if there are multiple.
+            content = urls
+                .map { Ghostty.Shell.escape($0.path) }
+                .joined(separator: " ")
+        } else if let str = pb.string(forType: .string) {
+            // Strings are not escaped because they may be copy/pasting a
+            // command they want to execute.
+            content = str
+        } else {
+            content = nil
+        }
+
+        if let content {
+            DispatchQueue.main.async {
+                self.insertText(
+                    content,
+                    replacementRange: NSMakeRange(0, 0)
+                )
+            }
+            return true
+        }
+
+        return false
     }
 }

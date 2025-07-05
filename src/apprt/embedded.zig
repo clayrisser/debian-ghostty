@@ -12,6 +12,7 @@ const objc = @import("objc");
 const apprt = @import("../apprt.zig");
 const font = @import("../font/main.zig");
 const input = @import("../input.zig");
+const internal_os = @import("../os/main.zig");
 const renderer = @import("../renderer.zig");
 const terminal = @import("../terminal/main.zig");
 const CoreApp = @import("../App.zig");
@@ -45,7 +46,7 @@ pub const App = struct {
         wakeup: *const fn (AppUD) callconv(.C) void,
 
         /// Callback called to handle an action.
-        action: *const fn (*App, apprt.Target.C, apprt.Action.C) callconv(.C) void,
+        action: *const fn (*App, apprt.Target.C, apprt.Action.C) callconv(.C) bool,
 
         /// Read the clipboard value. The return value must be preserved
         /// by the host until the next call. If there is no valid clipboard
@@ -147,12 +148,21 @@ pub const App = struct {
         self.core_app.focusEvent(focused);
     }
 
-    /// See CoreApp.keyEvent.
-    pub fn keyEvent(
+    /// Convert a C key event into a Zig key event.
+    ///
+    /// The buffer is needed for possibly storing translated UTF-8 text.
+    /// This buffer may (or may not) be referenced by the resulting KeyEvent
+    /// so it should be valid for the lifetime of the KeyEvent.
+    ///
+    /// The size of the buffer doesn't need to be large, we always
+    /// used to hardcode 128 bytes and never ran into issues. If it isn't
+    /// large enough an error will be returned.
+    fn coreKeyEvent(
         self: *App,
+        buf: []u8,
         target: KeyTarget,
         event: KeyEvent,
-    ) !bool {
+    ) !?input.KeyEvent {
         const action = event.action;
         const keycode = event.keycode;
         const mods = event.mods;
@@ -181,14 +191,9 @@ pub const App = struct {
                 if (strip) translate_mods.alt = false;
             }
 
-            // On macOS we strip ctrl because UCKeyTranslate
-            // converts to the masked values (i.e. ctrl+c becomes 3)
-            // and we don't want that behavior.
-            //
-            // We also strip super because its not used for translation
-            // on macos and it results in a bad translation.
+            // We strip super on macOS because its not used for translation
+            // it results in a bad translation.
             if (comptime builtin.target.isDarwin()) {
-                translate_mods.ctrl = false;
                 translate_mods.super = false;
             }
 
@@ -198,6 +203,11 @@ pub const App = struct {
         const event_text: ?[]const u8 = event_text: {
             // This logic only applies to macOS.
             if (comptime builtin.os.tag != .macos) break :event_text event.text;
+
+            // If we're in a preedit state then we allow it through. This
+            // allows ctrl sequences that affect IME to work. For example,
+            // Ctrl+H deletes a character with Japanese input.
+            if (event.composing) break :event_text event.text;
 
             // If the modifiers are ONLY "control" then we never process
             // the event text because we want to do our own translation so
@@ -216,15 +226,15 @@ pub const App = struct {
         // Translate our key using the keymap for our localized keyboard layout.
         // We only translate for keydown events. Otherwise, we only care about
         // the raw keycode.
-        var buf: [128]u8 = undefined;
         const result: input.Keymap.Translation = if (is_down) translate: {
             // If the event provided us with text, then we use this as a result
             // and do not do manual translation.
             const result: input.Keymap.Translation = if (event_text) |text| .{
                 .text = text,
                 .composing = event.composing,
+                .mods = translate_mods,
             } else try self.keymap.translate(
-                &buf,
+                buf,
                 switch (target) {
                     .app => &self.keymap_state,
                     .surface => |surface| &surface.keymap_state,
@@ -232,6 +242,14 @@ pub const App = struct {
                 @intCast(keycode),
                 translate_mods,
             );
+
+            // TODO(mitchellh): I think we can get rid of the above keymap
+            // translation code completely and defer to AppKit/Swift
+            // (for macOS) for handling all translations. The translation
+            // within libghostty is an artifact of an earlier design and
+            // it is buggy (see #5558). We should move closer to a GTK-style
+            // model of tracking composing states and preedit in the apprt
+            // and not in libghostty.
 
             // If this is a dead key, then we're composing a character and
             // we need to set our proper preedit state if we're targeting a
@@ -243,7 +261,7 @@ pub const App = struct {
                         result.text,
                     ) catch |err| {
                         log.err("error in preedit callback err={}", .{err});
-                        return false;
+                        return null;
                     },
                 }
             } else {
@@ -251,7 +269,7 @@ pub const App = struct {
                     .app => {},
                     .surface => |surface| surface.core_surface.preeditCallback(null) catch |err| {
                         log.err("error in preedit callback err={}", .{err});
-                        return false;
+                        return null;
                     },
                 }
 
@@ -259,16 +277,12 @@ pub const App = struct {
                 // then we clear the text. We handle non-printables in the
                 // key encoder manual (such as tab, ctrl+c, etc.)
                 if (result.text.len == 1 and result.text[0] < 0x20) {
-                    break :translate .{ .composing = false, .text = "" };
+                    break :translate .{};
                 }
             }
 
             break :translate result;
-        } else .{ .composing = false, .text = "" };
-
-        // UCKeyTranslate always consumes all mods, so if we have any output
-        // then we've consumed our translate mods.
-        const consumed_mods: input.Mods = if (result.text.len > 0) translate_mods else .{};
+        } else .{};
 
         // We need to always do a translation with no modifiers at all in
         // order to get the "unshifted_codepoint" for the key event.
@@ -335,34 +349,51 @@ pub const App = struct {
         } else .invalid;
 
         // Build our final key event
-        const input_event: input.KeyEvent = .{
+        return .{
             .action = action,
             .key = key,
             .physical_key = physical_key,
             .mods = mods,
-            .consumed_mods = consumed_mods,
+            .consumed_mods = result.mods,
             .composing = result.composing,
             .utf8 = result.text,
             .unshifted_codepoint = unshifted_codepoint,
         };
+    }
+
+    /// See CoreApp.keyEvent.
+    pub fn keyEvent(
+        self: *App,
+        target: KeyTarget,
+        event: KeyEvent,
+    ) !bool {
+        // Convert our C key event into a Zig one.
+        var buf: [128]u8 = undefined;
+        const input_event: input.KeyEvent = (try self.coreKeyEvent(
+            &buf,
+            target,
+            event,
+        )) orelse return false;
 
         // Invoke the core Ghostty logic to handle this input.
         const effect: CoreSurface.InputEffect = switch (target) {
             .app => if (self.core_app.keyEvent(
                 self,
                 input_event,
-            ))
-                .consumed
-            else
-                .ignored,
+            )) .consumed else .ignored,
 
-            .surface => |surface| try surface.core_surface.keyCallback(input_event),
+            .surface => |surface| try surface.core_surface.keyCallback(
+                input_event,
+            ),
         };
 
         return switch (effect) {
             .closed => true,
             .ignored => false,
             .consumed => consumed: {
+                const is_down = input_event.action == .press or
+                    input_event.action == .repeat;
+
                 if (is_down) {
                     // If we consume the key then we want to reset the dead
                     // key state.
@@ -449,13 +480,14 @@ pub const App = struct {
         surface.queueInspectorRender();
     }
 
-    /// Perform a given action.
+    /// Perform a given action. Returns `true` if the action was able to be
+    /// performed, `false` otherwise.
     pub fn performAction(
         self: *App,
         target: apprt.Target,
         comptime action: apprt.Action.Key,
         value: apprt.Action.Value(action),
-    ) !void {
+    ) !bool {
         // Special case certain actions before they are sent to the
         // embedded apprt.
         self.performPreAction(target, action, value);
@@ -465,7 +497,7 @@ pub const App = struct {
             action,
             value,
         });
-        self.opts.action(
+        return self.opts.action(
             self,
             target.cval(),
             @unionInit(apprt.Action, @tagName(action), value).cval(),
@@ -618,7 +650,7 @@ pub const Surface = struct {
                 .y = @floatCast(opts.scale_factor),
             },
             .size = .{ .width = 800, .height = 600 },
-            .cursor_pos = .{ .x = 0, .y = 0 },
+            .cursor_pos = .{ .x = -1, .y = -1 },
             .keymap_state = .{},
         };
 
@@ -977,7 +1009,7 @@ pub const Surface = struct {
     }
 
     fn queueInspectorRender(self: *Surface) void {
-        self.app.performAction(
+        _ = self.app.performAction(
             .{ .surface = &self.core_surface },
             .render_inspector,
             {},
@@ -996,6 +1028,30 @@ pub const Surface = struct {
         return .{
             .font_size = font_size,
         };
+    }
+
+    pub fn defaultTermioEnv(self: *const Surface) !std.process.EnvMap {
+        const alloc = self.app.core_app.alloc;
+        var env = try internal_os.getEnvMap(alloc);
+        errdefer env.deinit();
+
+        if (comptime builtin.target.isDarwin()) {
+            if (env.get("__XCODE_BUILT_PRODUCTS_DIR_PATHS") != null) {
+                env.remove("__XCODE_BUILT_PRODUCTS_DIR_PATHS");
+                env.remove("__XPC_DYLD_LIBRARY_PATH");
+                env.remove("DYLD_FRAMEWORK_PATH");
+                env.remove("DYLD_INSERT_LIBRARIES");
+                env.remove("DYLD_LIBRARY_PATH");
+                env.remove("LD_LIBRARY_PATH");
+                env.remove("SECURITYSESSIONID");
+                env.remove("XPC_SERVICE_NAME");
+            }
+
+            // Remove this so that running `ghostty` within Ghostty works.
+            env.remove("GHOSTTY_MAC_APP");
+        }
+
+        return env;
     }
 
     /// The cursor position from the host directly is in screen coordinates but
@@ -1332,10 +1388,9 @@ pub const CAPI = struct {
 
     /// Tick the event loop. This should be called whenever the "wakeup"
     /// callback is invoked for the runtime.
-    export fn ghostty_app_tick(v: *App) bool {
-        return v.core_app.tick(v) catch |err| err: {
+    export fn ghostty_app_tick(v: *App) void {
+        v.core_app.tick(v) catch |err| {
             log.err("error app tick err={}", .{err});
-            break :err false;
         };
     }
 
@@ -1372,6 +1427,30 @@ pub const CAPI = struct {
         };
     }
 
+    /// Returns true if the given key event would trigger a binding
+    /// if it were sent to the surface right now. The "right now"
+    /// is important because things like trigger sequences are only
+    /// valid until the next key event.
+    export fn ghostty_app_key_is_binding(
+        app: *App,
+        event: KeyEvent,
+    ) bool {
+        var buf: [128]u8 = undefined;
+        const core_event = app.coreKeyEvent(
+            &buf,
+            .app,
+            event.keyEvent(),
+        ) catch |err| {
+            log.warn("error processing key event err={}", .{err});
+            return false;
+        } orelse {
+            log.warn("error processing key event", .{});
+            return false;
+        };
+
+        return app.core_app.keyEventIsBinding(app, core_event);
+    }
+
     /// Notify the app that the keyboard was changed. This causes the
     /// keyboard layout to be reloaded from the OS.
     export fn ghostty_app_keyboard_changed(v: *App) void {
@@ -1383,7 +1462,7 @@ pub const CAPI = struct {
 
     /// Open the configuration.
     export fn ghostty_app_open_config(v: *App) void {
-        v.performAction(.app, .open_config, {}) catch |err| {
+        _ = v.performAction(.app, .open_config, {}) catch |err| {
             log.err("error reloading config err={}", .{err});
             return;
         };
@@ -1592,14 +1671,43 @@ pub const CAPI = struct {
     export fn ghostty_surface_key(
         surface: *Surface,
         event: KeyEvent,
-    ) void {
-        _ = surface.app.keyEvent(
+    ) bool {
+        return surface.app.keyEvent(
             .{ .surface = surface },
             event.keyEvent(),
         ) catch |err| {
             log.warn("error processing key event err={}", .{err});
-            return;
+            return false;
         };
+    }
+
+    /// Returns true if the given key event would trigger a binding
+    /// if it were sent to the surface right now. The "right now"
+    /// is important because things like trigger sequences are only
+    /// valid until the next key event.
+    export fn ghostty_surface_key_is_binding(
+        surface: *Surface,
+        event: KeyEvent,
+    ) bool {
+        var buf: [128]u8 = undefined;
+        const core_event = surface.app.coreKeyEvent(
+            &buf,
+            // Note: this "app" target here looks like a bug, but it is
+            // intentional. coreKeyEvent uses the target only as a way to
+            // trigger preedit callbacks for keymap translation and we don't
+            // want to trigger that here. See the todo item in coreKeyEvent
+            // for a long term solution to this and removing target altogether.
+            .app,
+            event.keyEvent(),
+        ) catch |err| {
+            log.warn("error processing key event err={}", .{err});
+            return false;
+        } orelse {
+            log.warn("error processing key event", .{});
+            return false;
+        };
+
+        return surface.core_surface.keyEventIsBinding(core_event);
     }
 
     /// Send raw text to the terminal. This is treated like a paste
@@ -1699,7 +1807,7 @@ pub const CAPI = struct {
 
     /// Request that the surface split in the given direction.
     export fn ghostty_surface_split(ptr: *Surface, direction: apprt.action.SplitDirection) void {
-        ptr.app.performAction(
+        _ = ptr.app.performAction(
             .{ .surface = &ptr.core_surface },
             .new_split,
             direction,
@@ -1714,7 +1822,7 @@ pub const CAPI = struct {
         ptr: *Surface,
         direction: apprt.action.GotoSplit,
     ) void {
-        ptr.app.performAction(
+        _ = ptr.app.performAction(
             .{ .surface = &ptr.core_surface },
             .goto_split,
             direction,
@@ -1733,7 +1841,7 @@ pub const CAPI = struct {
         direction: apprt.action.ResizeSplit.Direction,
         amount: u16,
     ) void {
-        ptr.app.performAction(
+        _ = ptr.app.performAction(
             .{ .surface = &ptr.core_surface },
             .resize_split,
             .{ .direction = direction, .amount = amount },
@@ -1745,7 +1853,7 @@ pub const CAPI = struct {
 
     /// Equalize the size of all splits in the current window.
     export fn ghostty_surface_split_equalize(ptr: *Surface) void {
-        ptr.app.performAction(
+        _ = ptr.app.performAction(
             .{ .surface = &ptr.core_surface },
             .equalize_splits,
             {},
@@ -1891,14 +1999,11 @@ pub const CAPI = struct {
         // Do nothing if we don't have background transparency enabled
         if (config.@"background-opacity" >= 1.0) return;
 
-        // Do nothing if our blur value is zero
-        if (config.@"background-blur-radius" == 0) return;
-
         const nswindow = objc.Object.fromId(window);
         _ = CGSSetWindowBackgroundBlurRadius(
             CGSDefaultConnectionForThread(),
             nswindow.msgSend(usize, objc.sel("windowNumber"), .{}),
-            @intCast(config.@"background-blur-radius"),
+            @intCast(config.@"background-blur".cval()),
         );
     }
 

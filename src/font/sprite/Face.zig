@@ -52,7 +52,7 @@ pub fn renderGlyph(
         }
     }
 
-    const metrics = opts.grid_metrics orelse self.metrics;
+    const metrics = self.metrics;
 
     // We adjust our sprite width based on the cell width.
     const width = switch (opts.cell_width orelse 1) {
@@ -236,6 +236,8 @@ const Kind = enum {
             // (Geometric Shapes)
             // 🯠 🯡 🯢 🯣 🯤 🯥 🯦 🯧 🯨 🯩 🯪 🯫 🯬 🯭 🯮 🯯
             0x1FBCE...0x1FBEF,
+            // (Octants)
+            0x1CD00...0x1CDE5,
             => .box,
 
             // Branch drawing character set, used for drawing git-like

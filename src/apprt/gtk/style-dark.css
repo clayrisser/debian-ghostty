@@ -2,7 +2,7 @@
   background-color: transparent;
 }
 
-separator {
+.terminal-window .notebook separator {
   background-color: rgba(36, 36, 36, 1);
   background-clip: content-box;
 }

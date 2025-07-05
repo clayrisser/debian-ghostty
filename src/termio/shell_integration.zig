@@ -58,67 +58,73 @@ pub fn setup(
         break :exe std.fs.path.basename(command[0..idx]);
     };
 
-    const result: ShellIntegration = shell: {
-        if (std.mem.eql(u8, "bash", exe)) {
-            // Apple distributes their own patched version of Bash 3.2
-            // on macOS that disables the ENV-based POSIX startup path.
-            // This means we're unable to perform our automatic shell
-            // integration sequence in this specific environment.
-            //
-            // If we're running "/bin/bash" on Darwin, we can assume
-            // we're using Apple's Bash because /bin is non-writable
-            // on modern macOS due to System Integrity Protection.
-            if (comptime builtin.target.isDarwin()) {
-                if (std.mem.eql(u8, "/bin/bash", command)) {
-                    return null;
-                }
-            }
-
-            const new_command = try setupBash(
-                alloc_arena,
-                command,
-                resource_dir,
-                env,
-            ) orelse return null;
-            break :shell .{
-                .shell = .bash,
-                .command = new_command,
-            };
-        }
-
-        if (std.mem.eql(u8, "elvish", exe)) {
-            try setupXdgDataDirs(alloc_arena, resource_dir, env);
-            break :shell .{
-                .shell = .elvish,
-                .command = try alloc_arena.dupe(u8, command),
-            };
-        }
-
-        if (std.mem.eql(u8, "fish", exe)) {
-            try setupXdgDataDirs(alloc_arena, resource_dir, env);
-            break :shell .{
-                .shell = .fish,
-                .command = try alloc_arena.dupe(u8, command),
-            };
-        }
-
-        if (std.mem.eql(u8, "zsh", exe)) {
-            try setupZsh(resource_dir, env);
-            break :shell .{
-                .shell = .zsh,
-                .command = try alloc_arena.dupe(u8, command),
-            };
-        }
-
-        return null;
-    };
+    const result = try setupShell(alloc_arena, resource_dir, command, env, exe);
 
     // Setup our feature env vars
-    if (!features.cursor) try env.put("GHOSTTY_SHELL_INTEGRATION_NO_CURSOR", "1");
-    if (!features.sudo) try env.put("GHOSTTY_SHELL_INTEGRATION_NO_SUDO", "1");
-    if (!features.title) try env.put("GHOSTTY_SHELL_INTEGRATION_NO_TITLE", "1");
+    try setupFeatures(env, features);
 
     return result;
+}
+
+fn setupShell(
+    alloc_arena: Allocator,
+    resource_dir: []const u8,
+    command: []const u8,
+    env: *EnvMap,
+    exe: []const u8,
+) !?ShellIntegration {
+    if (std.mem.eql(u8, "bash", exe)) {
+        // Apple distributes their own patched version of Bash 3.2
+        // on macOS that disables the ENV-based POSIX startup path.
+        // This means we're unable to perform our automatic shell
+        // integration sequence in this specific environment.
+        //
+        // If we're running "/bin/bash" on Darwin, we can assume
+        // we're using Apple's Bash because /bin is non-writable
+        // on modern macOS due to System Integrity Protection.
+        if (comptime builtin.target.isDarwin()) {
+            if (std.mem.eql(u8, "/bin/bash", command)) {
+                return null;
+            }
+        }
+
+        const new_command = try setupBash(
+            alloc_arena,
+            command,
+            resource_dir,
+            env,
+        ) orelse return null;
+        return .{
+            .shell = .bash,
+            .command = new_command,
+        };
+    }
+
+    if (std.mem.eql(u8, "elvish", exe)) {
+        try setupXdgDataDirs(alloc_arena, resource_dir, env);
+        return .{
+            .shell = .elvish,
+            .command = try alloc_arena.dupe(u8, command),
+        };
+    }
+
+    if (std.mem.eql(u8, "fish", exe)) {
+        try setupXdgDataDirs(alloc_arena, resource_dir, env);
+        return .{
+            .shell = .fish,
+            .command = try alloc_arena.dupe(u8, command),
+        };
+    }
+
+    if (std.mem.eql(u8, "zsh", exe)) {
+        try setupZsh(resource_dir, env);
+        return .{
+            .shell = .zsh,
+            .command = try alloc_arena.dupe(u8, command),
+        };
+    }
+
+    return null;
 }
 
 test "force shell" {
@@ -138,14 +144,64 @@ test "force shell" {
     }
 }
 
+/// Setup shell integration feature environment variables without
+/// performing full shell integration setup.
+pub fn setupFeatures(
+    env: *EnvMap,
+    features: config.ShellIntegrationFeatures,
+) !void {
+    if (!features.cursor) try env.put("GHOSTTY_SHELL_INTEGRATION_NO_CURSOR", "1");
+    if (!features.sudo) try env.put("GHOSTTY_SHELL_INTEGRATION_NO_SUDO", "1");
+    if (!features.title) try env.put("GHOSTTY_SHELL_INTEGRATION_NO_TITLE", "1");
+}
+
+test "setup features" {
+    const testing = std.testing;
+
+    var arena = ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    // Test: all features enabled (no environment variables should be set)
+    {
+        var env = EnvMap.init(alloc);
+        defer env.deinit();
+
+        try setupFeatures(&env, .{ .cursor = true, .sudo = true, .title = true });
+        try testing.expect(env.get("GHOSTTY_SHELL_INTEGRATION_NO_CURSOR") == null);
+        try testing.expect(env.get("GHOSTTY_SHELL_INTEGRATION_NO_SUDO") == null);
+        try testing.expect(env.get("GHOSTTY_SHELL_INTEGRATION_NO_TITLE") == null);
+    }
+
+    // Test: all features disabled
+    {
+        var env = EnvMap.init(alloc);
+        defer env.deinit();
+
+        try setupFeatures(&env, .{ .cursor = false, .sudo = false, .title = false });
+        try testing.expectEqualStrings("1", env.get("GHOSTTY_SHELL_INTEGRATION_NO_CURSOR").?);
+        try testing.expectEqualStrings("1", env.get("GHOSTTY_SHELL_INTEGRATION_NO_SUDO").?);
+        try testing.expectEqualStrings("1", env.get("GHOSTTY_SHELL_INTEGRATION_NO_TITLE").?);
+    }
+
+    // Test: mixed features
+    {
+        var env = EnvMap.init(alloc);
+        defer env.deinit();
+
+        try setupFeatures(&env, .{ .cursor = false, .sudo = true, .title = false });
+        try testing.expectEqualStrings("1", env.get("GHOSTTY_SHELL_INTEGRATION_NO_CURSOR").?);
+        try testing.expect(env.get("GHOSTTY_SHELL_INTEGRATION_NO_SUDO") == null);
+        try testing.expectEqualStrings("1", env.get("GHOSTTY_SHELL_INTEGRATION_NO_TITLE").?);
+    }
+}
+
 /// Setup the bash automatic shell integration. This works by
 /// starting bash in POSIX mode and using the ENV environment
 /// variable to load our bash integration script. This prevents
 /// bash from loading its normal startup files, which becomes
 /// our script's responsibility (along with disabling POSIX
 /// mode).
-///
-/// This approach requires bash version 4 or later.
 ///
 /// This returns a new (allocated) shell command string that
 /// enables the integration or null if integration failed.
@@ -174,46 +230,56 @@ fn setupBash(
     try args.append("--posix");
 
     // Stores the list of intercepted command line flags that will be passed
-    // to our shell integration script: --posix --norc --noprofile
+    // to our shell integration script: --norc --noprofile
     // We always include at least "1" so the script can differentiate between
     // being manually sourced or automatically injected (from here).
     var inject = try std.BoundedArray(u8, 32).init(0);
     try inject.appendSlice("1");
 
-    var posix = false;
-
-    // Some additional cases we don't yet cover:
+    // Walk through the rest of the given arguments. If we see an option that
+    // would require complex or unsupported integration behavior, we bail out
+    // and skip loading our shell integration. Users can still manually source
+    // the shell integration script.
     //
-    //  - If additional file arguments are provided (after a `-` or `--` flag),
-    //    and the `i` shell option isn't being explicitly set, we can assume a
-    //    non-interactive shell session and skip loading our shell integration.
+    // Unsupported options:
+    //  -c          -c is always non-interactive
+    //  --posix     POSIX mode (a la /bin/sh)
+    var rcfile: ?[]const u8 = null;
     while (iter.next()) |arg| {
         if (std.mem.eql(u8, arg, "--posix")) {
-            try inject.appendSlice(" --posix");
-            posix = true;
+            return null;
         } else if (std.mem.eql(u8, arg, "--norc")) {
             try inject.appendSlice(" --norc");
         } else if (std.mem.eql(u8, arg, "--noprofile")) {
             try inject.appendSlice(" --noprofile");
         } else if (std.mem.eql(u8, arg, "--rcfile") or std.mem.eql(u8, arg, "--init-file")) {
-            if (iter.next()) |rcfile| {
-                try env.put("GHOSTTY_BASH_RCFILE", rcfile);
-            }
+            rcfile = iter.next();
         } else if (arg.len > 1 and arg[0] == '-' and arg[1] != '-') {
             // '-c command' is always non-interactive
             if (std.mem.indexOfScalar(u8, arg, 'c') != null) {
                 return null;
             }
             try args.append(arg);
+        } else if (std.mem.eql(u8, arg, "-") or std.mem.eql(u8, arg, "--")) {
+            // All remaining arguments should be passed directly to the shell
+            // command. We shouldn't perform any further option processing.
+            try args.append(arg);
+            while (iter.next()) |remaining_arg| {
+                try args.append(remaining_arg);
+            }
+            break;
         } else {
             try args.append(arg);
         }
     }
     try env.put("GHOSTTY_BASH_INJECT", inject.slice());
+    if (rcfile) |v| {
+        try env.put("GHOSTTY_BASH_RCFILE", v);
+    }
 
     // In POSIX mode, HISTFILE defaults to ~/.sh_history, so unless we're
     // staying in POSIX mode (--posix), change it back to ~/.bash_history.
-    if (!posix and env.get("HISTFILE") == null) {
+    if (env.get("HISTFILE") == null) {
         var home_buf: [1024]u8 = undefined;
         if (try homedir.home(&home_buf)) |home| {
             var histfile_buf: [std.fs.max_path_bytes]u8 = undefined;
@@ -224,13 +290,6 @@ fn setupBash(
             );
             try env.put("HISTFILE", histfile);
             try env.put("GHOSTTY_BASH_UNEXPORT_HISTFILE", "1");
-        }
-    }
-
-    // Preserve the existing ENV value when staying in POSIX mode (--posix).
-    if (env.get("ENV")) |old| {
-        if (posix) {
-            try env.put("GHOSTTY_BASH_ENV", old);
         }
     }
 
@@ -262,21 +321,32 @@ test "bash" {
     try testing.expectEqualStrings("1", env.get("GHOSTTY_BASH_INJECT").?);
 }
 
-test "bash: inject flags" {
+test "bash: unsupported options" {
     const testing = std.testing;
     const alloc = testing.allocator;
 
-    // bash --posix
-    {
+    const cmdlines = [_][]const u8{
+        "bash --posix",
+        "bash --rcfile script.sh --posix",
+        "bash --init-file script.sh --posix",
+        "bash -c script.sh",
+        "bash -ic script.sh",
+    };
+
+    for (cmdlines) |cmdline| {
         var env = EnvMap.init(alloc);
         defer env.deinit();
 
-        const command = try setupBash(alloc, "bash --posix", ".", &env);
-        defer if (command) |c| alloc.free(c);
-
-        try testing.expectEqualStrings("bash --posix", command.?);
-        try testing.expectEqualStrings("1 --posix", env.get("GHOSTTY_BASH_INJECT").?);
+        try testing.expect(try setupBash(alloc, cmdline, ".", &env) == null);
+        try testing.expect(env.get("GHOSTTY_BASH_INJECT") == null);
+        try testing.expect(env.get("GHOSTTY_BASH_RCFILE") == null);
+        try testing.expect(env.get("GHOSTTY_BASH_UNEXPORT_HISTFILE") == null);
     }
+}
+
+test "bash: inject flags" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
 
     // bash --norc
     {
@@ -329,17 +399,6 @@ test "bash: rcfile" {
     }
 }
 
-test "bash: -c command" {
-    const testing = std.testing;
-    const alloc = testing.allocator;
-
-    var env = EnvMap.init(alloc);
-    defer env.deinit();
-
-    try testing.expect(try setupBash(alloc, "bash -c script.sh", ".", &env) == null);
-    try testing.expect(try setupBash(alloc, "bash -ic script.sh", ".", &env) == null);
-}
-
 test "bash: HISTFILE" {
     const testing = std.testing;
     const alloc = testing.allocator;
@@ -369,67 +428,29 @@ test "bash: HISTFILE" {
         try testing.expectEqualStrings("my_history", env.get("HISTFILE").?);
         try testing.expect(env.get("GHOSTTY_BASH_UNEXPORT_HISTFILE") == null);
     }
-
-    // HISTFILE unset (POSIX mode)
-    {
-        var env = EnvMap.init(alloc);
-        defer env.deinit();
-
-        const command = try setupBash(alloc, "bash --posix", ".", &env);
-        defer if (command) |c| alloc.free(c);
-
-        try testing.expect(env.get("HISTFILE") == null);
-        try testing.expect(env.get("GHOSTTY_BASH_UNEXPORT_HISTFILE") == null);
-    }
-
-    // HISTFILE set (POSIX mode)
-    {
-        var env = EnvMap.init(alloc);
-        defer env.deinit();
-
-        try env.put("HISTFILE", "my_history");
-
-        const command = try setupBash(alloc, "bash --posix", ".", &env);
-        defer if (command) |c| alloc.free(c);
-
-        try testing.expectEqualStrings("my_history", env.get("HISTFILE").?);
-        try testing.expect(env.get("GHOSTTY_BASH_UNEXPORT_HISTFILE") == null);
-    }
 }
 
-test "bash: preserve ENV" {
+test "bash: additional arguments" {
     const testing = std.testing;
     const alloc = testing.allocator;
 
     var env = EnvMap.init(alloc);
     defer env.deinit();
 
-    const original_env = "original-env.bash";
-
-    // POSIX mode
+    // "-" argument separator
     {
-        try env.put("ENV", original_env);
-        const command = try setupBash(alloc, "bash --posix", ".", &env);
+        const command = try setupBash(alloc, "bash - --arg file1 file2", ".", &env);
         defer if (command) |c| alloc.free(c);
 
-        try testing.expect(std.mem.indexOf(u8, command.?, "--posix") != null);
-        try testing.expect(std.mem.indexOf(u8, env.get("GHOSTTY_BASH_INJECT").?, "posix") != null);
-        try testing.expectEqualStrings(original_env, env.get("GHOSTTY_BASH_ENV").?);
-        try testing.expectEqualStrings("./shell-integration/bash/ghostty.bash", env.get("ENV").?);
+        try testing.expectEqualStrings("bash --posix - --arg file1 file2", command.?);
     }
 
-    env.remove("GHOSTTY_BASH_ENV");
-
-    // Not POSIX mode
+    // "--" argument separator
     {
-        try env.put("ENV", original_env);
-        const command = try setupBash(alloc, "bash", ".", &env);
+        const command = try setupBash(alloc, "bash -- --arg file1 file2", ".", &env);
         defer if (command) |c| alloc.free(c);
 
-        try testing.expect(std.mem.indexOf(u8, command.?, "--posix") != null);
-        try testing.expect(std.mem.indexOf(u8, env.get("GHOSTTY_BASH_INJECT").?, "posix") == null);
-        try testing.expect(env.get("GHOSTTY_BASH_ENV") == null);
-        try testing.expectEqualStrings("./shell-integration/bash/ghostty.bash", env.get("ENV").?);
+        try testing.expectEqualStrings("bash --posix -- --arg file1 file2", command.?);
     }
 }
 

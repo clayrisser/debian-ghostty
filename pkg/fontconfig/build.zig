@@ -13,7 +13,56 @@ pub fn build(b: *std.Build) !void {
     ) orelse (target.result.os.tag != .windows);
     const freetype_enabled = b.option(bool, "enable-freetype", "Build freetype") orelse true;
 
-    const module = b.addModule("fontconfig", .{ .root_source_file = b.path("main.zig") });
+    const module = b.addModule("fontconfig", .{
+        .root_source_file = b.path("main.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    // For dynamic linking, we prefer dynamic linking and to search by
+    // mode first. Mode first will search all paths for a dynamic library
+    // before falling back to static.
+    const dynamic_link_opts: std.Build.Module.LinkSystemLibraryOptions = .{
+        .preferred_link_mode = .dynamic,
+        .search_strategy = .mode_first,
+    };
+
+    const test_exe = b.addTest(.{
+        .name = "test",
+        .root_source_file = b.path("main.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const tests_run = b.addRunArtifact(test_exe);
+    const test_step = b.step("test", "Run tests");
+    test_step.dependOn(&tests_run.step);
+
+    if (b.systemIntegrationOption("fontconfig", .{})) {
+        module.linkSystemLibrary("fontconfig", dynamic_link_opts);
+        test_exe.linkSystemLibrary2("fontconfig", dynamic_link_opts);
+    } else {
+        const lib = try buildLib(b, module, .{
+            .target = target,
+            .optimize = optimize,
+
+            .libxml2_enabled = libxml2_enabled,
+            .libxml2_iconv_enabled = libxml2_iconv_enabled,
+            .freetype_enabled = freetype_enabled,
+
+            .dynamic_link_opts = dynamic_link_opts,
+        });
+
+        test_exe.linkLibrary(lib);
+    }
+}
+
+fn buildLib(b: *std.Build, module: *std.Build.Module, options: anytype) !*std.Build.Step.Compile {
+    const target = options.target;
+    const optimize = options.optimize;
+
+    const libxml2_enabled = options.libxml2_enabled;
+    const libxml2_iconv_enabled = options.libxml2_iconv_enabled;
+    const freetype_enabled = options.freetype_enabled;
 
     const upstream = b.dependency("fontconfig", .{});
     const lib = b.addStaticLibrary(.{
@@ -131,19 +180,13 @@ pub fn build(b: *std.Build) !void {
         }
     }
 
-    // For dynamic linking, we prefer dynamic linking and to search by
-    // mode first. Mode first will search all paths for a dynamic library
-    // before falling back to static.
-    const dynamic_link_opts: std.Build.Module.LinkSystemLibraryOptions = .{
-        .preferred_link_mode = .dynamic,
-        .search_strategy = .mode_first,
-    };
+    const dynamic_link_opts = options.dynamic_link_opts;
 
     // Freetype2
     _ = b.systemIntegrationOption("freetype", .{}); // So it shows up in help
     if (freetype_enabled) {
         if (b.systemIntegrationOption("freetype", .{})) {
-            lib.linkSystemLibrary2("freetype", dynamic_link_opts);
+            lib.linkSystemLibrary2("freetype2", dynamic_link_opts);
         } else {
             const freetype_dep = b.dependency(
                 "freetype",
@@ -194,16 +237,7 @@ pub fn build(b: *std.Build) !void {
 
     b.installArtifact(lib);
 
-    const test_exe = b.addTest(.{
-        .name = "test",
-        .root_source_file = b.path("main.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    test_exe.linkLibrary(lib);
-    const tests_run = b.addRunArtifact(test_exe);
-    const test_step = b.step("test", "Run tests");
-    test_step.dependOn(&tests_run.step);
+    return lib;
 }
 
 const headers = &.{

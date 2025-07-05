@@ -15,6 +15,7 @@ const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const builtin = @import("builtin");
 const build_config = @import("../../build_config.zig");
+const build_options = @import("build_options");
 const apprt = @import("../../apprt.zig");
 const configpkg = @import("../../config.zig");
 const input = @import("../../input.zig");
@@ -35,7 +36,7 @@ const c = @import("c.zig").c;
 const version = @import("version.zig");
 const inspector = @import("inspector.zig");
 const key = @import("key.zig");
-const x11 = @import("x11.zig");
+const winproto = @import("winproto.zig");
 const testing = std.testing;
 
 const log = std.log.scoped(.gtk);
@@ -47,6 +48,9 @@ config: Config,
 
 app: *c.GtkApplication,
 ctx: *c.GMainContext,
+
+/// State and logic for the underlying windowing protocol.
+winproto: winproto.App,
 
 /// True if the app was launched with single instance mode.
 single_instance: bool,
@@ -69,8 +73,10 @@ clipboard_confirmation_window: ?*ClipboardConfirmationWindow = null,
 /// This is set to false when the main loop should exit.
 running: bool = true,
 
-/// Xkb state (X11 only). Will be null on Wayland.
-x11_xkb: ?x11.Xkb = null,
+/// If we should retry querying D-Bus for the color scheme with the deprecated
+/// Read method, instead of the recommended ReadOne method. This is kind of
+/// nasty to have as struct state but its just a byte...
+dbus_color_scheme_retry: bool = true,
 
 /// The base path of the transient cgroup used to put all surfaces
 /// into their own cgroup. This is only set if cgroups are enabled
@@ -79,6 +85,9 @@ transient_cgroup_base: ?[]const u8 = null,
 
 /// CSS Provider for any styles based on ghostty configuration values
 css_provider: *c.GtkCssProvider,
+
+/// Providers for loading custom stylesheets defined by user
+custom_css_providers: std.ArrayListUnmanaged(*c.GtkCssProvider) = .{},
 
 /// The timer used to quit the application after the last window is closed.
 quit_timer: union(enum) {
@@ -99,42 +108,6 @@ pub fn init(core_app: *CoreApp, opts: Options) !App {
         c.gtk_get_minor_version(),
         c.gtk_get_micro_version(),
     });
-
-    // Disabling Vulkan can improve startup times by hundreds of
-    // milliseconds on some systems. We don't use Vulkan so we can just
-    // disable it.
-    if (version.atLeast(4, 16, 0)) {
-        // From gtk 4.16, GDK_DEBUG is split into GDK_DEBUG and GDK_DISABLE.
-        // For the remainder of "why" see the 4.14 comment below.
-        _ = internal_os.setenv("GDK_DISABLE", "gles-api,vulkan");
-        _ = internal_os.setenv("GDK_DEBUG", "opengl");
-    } else if (version.atLeast(4, 14, 0)) {
-        // We need to export GDK_DEBUG to run on Wayland after GTK 4.14.
-        // Older versions of GTK do not support these values so it is safe
-        // to always set this. Forwards versions are uncertain so we'll have to
-        // reassess...
-        //
-        // Upstream issue: https://gitlab.gnome.org/GNOME/gtk/-/issues/6589
-        //
-        // Specific details about values:
-        //   - "opengl" - output OpenGL debug information
-        //   - "gl-disable-gles" - disable GLES, Ghostty can't use GLES
-        //   - "vulkan-disable" - disable Vulkan, Ghostty can't use Vulkan
-        //     and initializing a Vulkan context was causing a longer delay
-        //     on some systems.
-        _ = internal_os.setenv("GDK_DEBUG", "opengl,gl-disable-gles,vulkan-disable");
-    } else {
-        // Versions prior to 4.14 are a bit of an unknown for Ghostty. It
-        // is an environment that isn't tested well and we don't have a
-        // good understanding of what we may need to do.
-        _ = internal_os.setenv("GDK_DEBUG", "vulkan-disable");
-    }
-
-    if (version.atLeast(4, 14, 0)) {
-        // We need to export GSK_RENDERER to opengl because GTK uses ngl by
-        // default after 4.14
-        _ = internal_os.setenv("GSK_RENDERER", "opengl");
-    }
 
     // Load our configuration
     var config = try Config.load(core_app.alloc);
@@ -157,8 +130,106 @@ pub fn init(core_app: *CoreApp, opts: Options) !App {
         }
     }
 
+    var gdk_debug: struct {
+        /// output OpenGL debug information
+        opengl: bool = false,
+        /// disable GLES, Ghostty can't use GLES
+        @"gl-disable-gles": bool = false,
+        @"gl-no-fractional": bool = false,
+        /// Disabling Vulkan can improve startup times by hundreds of
+        /// milliseconds on some systems. We don't use Vulkan so we can just
+        /// disable it.
+        @"vulkan-disable": bool = false,
+    } = .{
+        .opengl = config.@"gtk-opengl-debug",
+    };
+
+    var gdk_disable: struct {
+        @"gles-api": bool = false,
+        /// current gtk implementation for color management is not good enough.
+        /// see: https://bugs.kde.org/show_bug.cgi?id=495647
+        /// gtk issue: https://gitlab.gnome.org/GNOME/gtk/-/issues/6864
+        @"color-mgmt": bool = true,
+        /// Disabling Vulkan can improve startup times by hundreds of
+        /// milliseconds on some systems. We don't use Vulkan so we can just
+        /// disable it.
+        vulkan: bool = false,
+    } = .{};
+
+    environment: {
+        if (version.runtimeAtLeast(4, 18, 0)) {
+            gdk_disable.@"color-mgmt" = false;
+        }
+
+        if (version.runtimeAtLeast(4, 16, 0)) {
+            // From gtk 4.16, GDK_DEBUG is split into GDK_DEBUG and GDK_DISABLE.
+            // For the remainder of "why" see the 4.14 comment below.
+            gdk_disable.@"gles-api" = true;
+            gdk_disable.vulkan = true;
+            gdk_debug.@"gl-no-fractional" = true;
+            break :environment;
+        }
+        if (version.runtimeAtLeast(4, 14, 0)) {
+            // We need to export GDK_DEBUG to run on Wayland after GTK 4.14.
+            // Older versions of GTK do not support these values so it is safe
+            // to always set this. Forwards versions are uncertain so we'll have
+            // to reassess...
+            //
+            // Upstream issue: https://gitlab.gnome.org/GNOME/gtk/-/issues/6589
+            gdk_debug.@"gl-disable-gles" = true;
+            gdk_debug.@"gl-no-fractional" = true;
+            gdk_debug.@"vulkan-disable" = true;
+            break :environment;
+        }
+        // Versions prior to 4.14 are a bit of an unknown for Ghostty. It
+        // is an environment that isn't tested well and we don't have a
+        // good understanding of what we may need to do.
+        gdk_debug.@"vulkan-disable" = true;
+    }
+
+    {
+        var buf: [128]u8 = undefined;
+        var fmt = std.io.fixedBufferStream(&buf);
+        const writer = fmt.writer();
+        var first: bool = true;
+        inline for (@typeInfo(@TypeOf(gdk_debug)).Struct.fields) |field| {
+            if (@field(gdk_debug, field.name)) {
+                if (!first) try writer.writeAll(",");
+                try writer.writeAll(field.name);
+                first = false;
+            }
+        }
+        try writer.writeByte(0);
+        const value = fmt.getWritten();
+        log.warn("setting GDK_DEBUG={s}", .{value[0 .. value.len - 1]});
+        _ = internal_os.setenv("GDK_DEBUG", value[0 .. value.len - 1 :0]);
+    }
+
+    {
+        var buf: [128]u8 = undefined;
+        var fmt = std.io.fixedBufferStream(&buf);
+        const writer = fmt.writer();
+        var first: bool = true;
+        inline for (@typeInfo(@TypeOf(gdk_disable)).Struct.fields) |field| {
+            if (@field(gdk_disable, field.name)) {
+                if (!first) try writer.writeAll(",");
+                try writer.writeAll(field.name);
+                first = false;
+            }
+        }
+        try writer.writeByte(0);
+        const value = fmt.getWritten();
+        log.warn("setting GDK_DISABLE={s}", .{value[0 .. value.len - 1]});
+        _ = internal_os.setenv("GDK_DISABLE", value[0 .. value.len - 1 :0]);
+    }
+
     c.gtk_init();
-    const display = c.gdk_display_get_default();
+    const display: *c.GdkDisplay = c.gdk_display_get_default() orelse {
+        // I'm unsure of any scenario where this happens. Because we don't
+        // want to litter null checks everywhere, we just exit here.
+        log.warn("gdk display is null, exiting", .{});
+        std.posix.exit(1);
+    };
 
     // If we're using libadwaita, log the version
     if (adwaita.enabled(&config)) {
@@ -356,41 +427,15 @@ pub fn init(core_app: *CoreApp, opts: Options) !App {
         return error.GtkApplicationRegisterFailed;
     }
 
-    // Perform all X11 initialization. This ultimately returns the X11
-    // keyboard state but the block does more than that (i.e. setting up
-    // WM_CLASS).
-    const x11_xkb: ?x11.Xkb = x11_xkb: {
-        if (!x11.is_display(display)) break :x11_xkb null;
-
-        // Set the X11 window class property (WM_CLASS) if are are on an X11
-        // display.
-        //
-        // Note that we also set the program name here using g_set_prgname.
-        // This is how the instance name field for WM_CLASS is derived when
-        // calling gdk_x11_display_set_program_class; there does not seem to be
-        // a way to set it directly. It does not look like this is being set by
-        // our other app initialization routines currently, but since we're
-        // currently deriving its value from x11-instance-name effectively, I
-        // feel like gating it behind an X11 check is better intent.
-        //
-        // This makes the property show up like so when using xprop:
-        //
-        //     WM_CLASS(STRING) = "ghostty", "com.mitchellh.ghostty"
-        //
-        // Append "-debug" on both when using the debug build.
-        //
-        const prgname = if (config.@"x11-instance-name") |pn|
-            pn
-        else if (builtin.mode == .Debug)
-            "ghostty-debug"
-        else
-            "ghostty";
-        c.g_set_prgname(prgname);
-        c.gdk_x11_display_set_program_class(display, app_id);
-
-        // Set up Xkb
-        break :x11_xkb try x11.Xkb.init(display);
-    };
+    // Setup our windowing protocol logic
+    var winproto_app = try winproto.App.init(
+        core_app.alloc,
+        display,
+        app_id,
+        &config,
+    );
+    errdefer winproto_app.deinit(core_app.alloc);
+    log.debug("windowing protocol={s}", .{@tagName(winproto_app)});
 
     // This just calls the `activate` signal but its part of the normal startup
     // routine so we just call it, but only if the config allows it (this allows
@@ -416,7 +461,7 @@ pub fn init(core_app: *CoreApp, opts: Options) !App {
         .config = config,
         .ctx = ctx,
         .cursor_none = cursor_none,
-        .x11_xkb = x11_xkb,
+        .winproto = winproto_app,
         .single_instance = single_instance,
         // If we are NOT the primary instance, then we never want to run.
         // This means that another instance of the GTK app is running and
@@ -439,30 +484,41 @@ pub fn terminate(self: *App) void {
     if (self.context_menu) |context_menu| c.g_object_unref(context_menu);
     if (self.transient_cgroup_base) |path| self.core_app.alloc.free(path);
 
+    for (self.custom_css_providers.items) |provider| {
+        c.g_object_unref(provider);
+    }
+    self.custom_css_providers.deinit(self.core_app.alloc);
+
+    self.winproto.deinit(self.core_app.alloc);
+
     self.config.deinit();
 }
 
-/// Perform a given action.
+/// Perform a given action. Returns `true` if the action was able to be
+/// performed, `false` otherwise.
 pub fn performAction(
     self: *App,
     target: apprt.Target,
     comptime action: apprt.Action.Key,
     value: apprt.Action.Value(action),
-) !void {
+) !bool {
     switch (action) {
+        .quit => self.quit(),
         .new_window => _ = try self.newWindow(switch (target) {
             .app => null,
             .surface => |v| v,
         }),
+        .toggle_maximize => self.toggleMaximize(target),
         .toggle_fullscreen => self.toggleFullscreen(target, value),
 
         .new_tab => try self.newTab(target),
-        .goto_tab => self.gotoTab(target, value),
+        .close_tab => try self.closeTab(target),
+        .goto_tab => return self.gotoTab(target, value),
         .move_tab => self.moveTab(target, value),
         .new_split => try self.newSplit(target, value),
         .resize_split => self.resizeSplit(target, value),
         .equalize_splits => self.equalizeSplits(target),
-        .goto_split => self.gotoSplit(target, value),
+        .goto_split => return self.gotoSplit(target, value),
         .open_config => try configpkg.edit.open(self.core_app.alloc),
         .config_change => self.configChange(target, value.config),
         .reload_config => try self.reloadConfig(target, value),
@@ -472,6 +528,7 @@ pub fn performAction(
         .pwd => try self.setPwd(target, value),
         .present_terminal => self.presentTerminal(target),
         .initial_size => try self.setInitialSize(target, value),
+        .size_limit => try self.setSizeLimit(target, value),
         .mouse_visibility => self.setMouseVisibility(target, value),
         .mouse_shape => try self.setMouseShape(target, value),
         .mouse_over_link => self.setMouseOverLink(target, value),
@@ -484,15 +541,21 @@ pub fn performAction(
         .close_all_windows,
         .toggle_quick_terminal,
         .toggle_visibility,
-        .size_limit,
         .cell_size,
         .secure_input,
         .key_sequence,
         .render_inspector,
         .renderer_health,
         .color_change,
-        => log.warn("unimplemented action={}", .{action}),
+        => {
+            log.warn("unimplemented action={}", .{action});
+            return false;
+        },
     }
+
+    // We can assume it was handled because all unknown/unimplemented actions
+    // are caught above.
+    return true;
 }
 
 fn newTab(_: *App, target: apprt.Target) !void {
@@ -512,24 +575,41 @@ fn newTab(_: *App, target: apprt.Target) !void {
     }
 }
 
-fn gotoTab(_: *App, target: apprt.Target, tab: apprt.action.GotoTab) void {
+fn closeTab(_: *App, target: apprt.Target) !void {
     switch (target) {
         .app => {},
+        .surface => |v| {
+            const tab = v.rt_surface.container.tab() orelse {
+                log.info(
+                    "close_tab invalid for container={s}",
+                    .{@tagName(v.rt_surface.container)},
+                );
+                return;
+            };
+
+            tab.closeWithConfirmation();
+        },
+    }
+}
+
+fn gotoTab(_: *App, target: apprt.Target, tab: apprt.action.GotoTab) bool {
+    switch (target) {
+        .app => return false,
         .surface => |v| {
             const window = v.rt_surface.container.window() orelse {
                 log.info(
                     "gotoTab invalid for container={s}",
                     .{@tagName(v.rt_surface.container)},
                 );
-                return;
+                return false;
             };
 
-            switch (tab) {
+            return switch (tab) {
                 .previous => window.gotoPreviousTab(v.rt_surface),
                 .next => window.gotoNextTab(v.rt_surface),
                 .last => window.gotoLastTab(),
                 else => window.gotoTab(@intCast(@intFromEnum(tab))),
-            }
+            };
         },
     }
 }
@@ -583,18 +663,22 @@ fn gotoSplit(
     _: *const App,
     target: apprt.Target,
     direction: apprt.action.GotoSplit,
-) void {
+) bool {
     switch (target) {
-        .app => {},
+        .app => return false,
         .surface => |v| {
-            const s = v.rt_surface.container.split() orelse return;
+            const s = v.rt_surface.container.split() orelse return false;
             const map = s.directionMap(switch (v.rt_surface.container) {
                 .split_tl => .top_left,
                 .split_br => .bottom_right,
                 .none, .tab_ => unreachable,
             });
-            const surface_ = map.get(direction) orelse return;
-            if (surface_) |surface| surface.grabFocus();
+            const surface_ = map.get(direction) orelse return false;
+            if (surface_) |surface| {
+                surface.grabFocus();
+                return true;
+            }
+            return false;
         },
     }
 }
@@ -636,6 +720,22 @@ fn controlInspector(
     };
 
     surface.controlInspector(mode);
+}
+
+fn toggleMaximize(_: *App, target: apprt.Target) void {
+    switch (target) {
+        .app => {},
+        .surface => |v| {
+            const window = v.rt_surface.container.window() orelse {
+                log.info(
+                    "toggleMaximize invalid for container={s}",
+                    .{@tagName(v.rt_surface.container)},
+                );
+                return;
+            };
+            window.toggleMaximize();
+        },
+    }
 }
 
 fn toggleFullscreen(
@@ -784,6 +884,24 @@ fn setInitialSize(
         ),
     }
 }
+
+fn setSizeLimit(
+    _: *App,
+    target: apprt.Target,
+    value: apprt.action.SizeLimit,
+) !void {
+    switch (target) {
+        .app => {},
+        .surface => |v| try v.rt_surface.setSizeLimits(.{
+            .width = value.min_width,
+            .height = value.min_height,
+        }, if (value.max_width > 0) .{
+            .width = value.max_width,
+            .height = value.max_height,
+        } else null),
+    }
+}
+
 fn showDesktopNotification(
     self: *App,
     target: apprt.Target,
@@ -826,9 +944,12 @@ fn configChange(
     new_config: *const Config,
 ) void {
     switch (target) {
-        // We don't do anything for surface config change events. There
-        // is nothing to sync with regards to a surface today.
-        .surface => {},
+        .surface => |surface| surface: {
+            const window = surface.rt_surface.container.window() orelse break :surface;
+            window.updateConfig(new_config) catch |err| {
+                log.warn("error updating config for window err={}", .{err});
+            };
+        },
 
         .app => {
             // We clone (to take ownership) and update our configuration.
@@ -890,13 +1011,16 @@ fn syncConfigChanges(self: *App) !void {
     try self.updateConfigErrors();
     try self.syncActionAccelerators();
 
-    // Load our runtime CSS. If this fails then our window is just stuck
+    // Load our runtime and custom CSS. If this fails then our window is just stuck
     // with the old CSS but we don't want to fail the entire sync operation.
     self.loadRuntimeCss() catch |err| switch (err) {
         error.OutOfMemory => log.warn(
             "out of memory loading runtime CSS, no runtime CSS applied",
             .{},
         ),
+    };
+    self.loadCustomCss() catch |err| {
+        log.warn("Failed to load custom CSS, no custom CSS applied, err={}", .{err});
     };
 }
 
@@ -966,8 +1090,8 @@ fn loadRuntimeCss(
     const config: *const Config = &self.config;
     const window_theme = config.@"window-theme";
     const unfocused_fill: Config.Color = config.@"unfocused-split-fill" orelse config.background;
-    const headerbar_background = config.background;
-    const headerbar_foreground = config.foreground;
+    const headerbar_background = config.@"window-titlebar-background" orelse config.background;
+    const headerbar_foreground = config.@"window-titlebar-foreground" orelse config.foreground;
 
     try writer.print(
         \\widget.unfocused-split {{
@@ -981,13 +1105,42 @@ fn loadRuntimeCss(
         unfocused_fill.b,
     });
 
-    if (version.atLeast(4, 16, 0)) {
+    if (config.@"split-divider-color") |color| {
+        try writer.print(
+            \\.terminal-window .notebook separator {{
+            \\  color: rgb({[r]d},{[g]d},{[b]d});
+            \\  background: rgb({[r]d},{[g]d},{[b]d});
+            \\}}
+        , .{
+            .r = color.r,
+            .g = color.g,
+            .b = color.b,
+        });
+    }
+
+    if (config.@"window-title-font-family") |font_family| {
+        try writer.print(
+            \\.window headerbar {{
+            \\  font-family: "{[font_family]s}";
+            \\}}
+        , .{ .font_family = font_family });
+    }
+
+    if (version.runtimeAtLeast(4, 16, 0)) {
         switch (window_theme) {
             .ghostty => try writer.print(
                 \\:root {{
-                \\  --headerbar-fg-color: rgb({d},{d},{d});
-                \\  --headerbar-bg-color: rgb({d},{d},{d});
+                \\  --ghostty-fg: rgb({d},{d},{d});
+                \\  --ghostty-bg: rgb({d},{d},{d});
+                \\  --headerbar-fg-color: var(--ghostty-fg);
+                \\  --headerbar-bg-color: var(--ghostty-bg);
                 \\  --headerbar-backdrop-color: oklab(from var(--headerbar-bg-color) calc(l * 0.9) a b / alpha);
+                \\  --overview-fg-color: var(--ghostty-fg);
+                \\  --overview-bg-color: var(--ghostty-bg);
+                \\  --popover-fg-color: var(--ghostty-fg);
+                \\  --popover-bg-color: var(--ghostty-bg);
+                \\  --window-fg-color: var(--ghostty-fg);
+                \\  --window-bg-color: var(--ghostty-bg);
                 \\}}
                 \\windowhandle {{
                 \\  background-color: var(--headerbar-bg-color);
@@ -1025,11 +1178,66 @@ fn loadRuntimeCss(
     }
 
     // Clears any previously loaded CSS from this provider
-    c.gtk_css_provider_load_from_data(
-        self.css_provider,
-        buf.items.ptr,
-        @intCast(buf.items.len),
-    );
+    loadCssProviderFromData(self.css_provider, buf.items);
+}
+
+fn loadCustomCss(self: *App) !void {
+    const display = c.gdk_display_get_default();
+
+    // unload the previously loaded style providers
+    for (self.custom_css_providers.items) |provider| {
+        c.gtk_style_context_remove_provider_for_display(
+            display,
+            @ptrCast(provider),
+        );
+        c.g_object_unref(provider);
+    }
+    self.custom_css_providers.clearRetainingCapacity();
+
+    for (self.config.@"gtk-custom-css".value.items) |p| {
+        const path, const optional = switch (p) {
+            .optional => |path| .{ path, true },
+            .required => |path| .{ path, false },
+        };
+        const file = std.fs.openFileAbsolute(path, .{}) catch |err| {
+            if (err != error.FileNotFound or !optional) {
+                log.err("error opening gtk-custom-css file {s}: {}", .{ path, err });
+            }
+            continue;
+        };
+        defer file.close();
+
+        log.info("loading gtk-custom-css path={s}", .{path});
+        const contents = try file.reader().readAllAlloc(self.core_app.alloc, 5 * 1024 * 1024 // 5MB
+        );
+        defer self.core_app.alloc.free(contents);
+
+        const provider = c.gtk_css_provider_new();
+        c.gtk_style_context_add_provider_for_display(
+            display,
+            @ptrCast(provider),
+            c.GTK_STYLE_PROVIDER_PRIORITY_USER,
+        );
+
+        loadCssProviderFromData(provider, contents);
+
+        try self.custom_css_providers.append(self.core_app.alloc, provider);
+    }
+}
+
+fn loadCssProviderFromData(provider: *c.GtkCssProvider, data: []const u8) void {
+    if (version.atLeast(4, 12, 0)) {
+        const g_bytes = c.g_bytes_new(data.ptr, data.len);
+        defer c.g_bytes_unref(g_bytes);
+
+        c.gtk_css_provider_load_from_bytes(provider, g_bytes);
+    } else {
+        c.gtk_css_provider_load_from_data(
+            provider,
+            data.ptr,
+            @intCast(data.len),
+        );
+    }
 }
 
 /// Called by CoreApp to wake up the event loop.
@@ -1075,16 +1283,14 @@ pub fn run(self: *App) !void {
         self.transient_cgroup_base = path;
     } else log.debug("cgroup isolation disabled config={}", .{self.config.@"linux-cgroup"});
 
-    // Setup our D-Bus connection for listening to settings changes.
+    // Setup our D-Bus connection for listening to settings changes,
+    // and asynchronously request the initial color scheme
     self.initDbus();
 
     // Setup our menu items
     self.initActions();
     self.initMenu();
     self.initContextMenu();
-
-    // Setup our initial color scheme
-    self.colorSchemeEvent(self.getColorScheme());
 
     // On startup, we want to check for configuration errors right away
     // so we can show our error window. We also need to setup other initial
@@ -1097,14 +1303,10 @@ pub fn run(self: *App) !void {
         _ = c.g_main_context_iteration(self.ctx, 1);
 
         // Tick the terminal app and see if we should quit.
-        const should_quit = try self.core_app.tick(self);
+        try self.core_app.tick(self);
 
         // Check if we must quit based on the current state.
         const must_quit = q: {
-            // If we've been told by GTK that we should quit, do so regardless
-            // of any other setting.
-            if (should_quit) break :q true;
-
             // If we are configured to always stay running, don't quit.
             if (!self.config.@"quit-after-last-window-closed") break :q false;
 
@@ -1136,6 +1338,22 @@ fn initDbus(self: *App) void {
         &gtkNotifyColorScheme,
         self,
         null,
+    );
+
+    // Request the initial color scheme asynchronously.
+    c.g_dbus_connection_call(
+        dbus,
+        "org.freedesktop.portal.Desktop",
+        "/org/freedesktop/portal/desktop",
+        "org.freedesktop.portal.Settings",
+        "ReadOne",
+        c.g_variant_new("(ss)", "org.freedesktop.appearance", "color-scheme"),
+        c.G_VARIANT_TYPE("(v)"),
+        c.G_DBUS_CALL_FLAGS_NONE,
+        -1,
+        null,
+        dbusColorSchemeCallback,
+        self,
     );
 }
 
@@ -1208,6 +1426,9 @@ fn newWindow(self: *App, parent_: ?*CoreSurface) !void {
 }
 
 fn quit(self: *App) void {
+    // If we're already not running, do nothing.
+    if (!self.running) return;
+
     // If we have no toplevel windows, then we're done.
     const list = c.gtk_window_list_toplevels();
     if (list == null) {
@@ -1371,42 +1592,58 @@ fn gtkWindowIsActive(
     core_app.focusEvent(false);
 }
 
-/// Call a D-Bus method to determine the current color scheme. If there
-/// is any error at any point we'll log the error and return "light"
-pub fn getColorScheme(self: *App) apprt.ColorScheme {
-    const dbus_connection = c.g_application_get_dbus_connection(@ptrCast(self.app));
+fn dbusColorSchemeCallback(
+    source_object: [*c]c.GObject,
+    res: ?*c.GAsyncResult,
+    ud: ?*anyopaque,
+) callconv(.C) void {
+    const self: *App = @ptrCast(@alignCast(ud.?));
+    const dbus: *c.GDBusConnection = @ptrCast(source_object);
 
     var err: ?*c.GError = null;
     defer if (err) |e| c.g_error_free(e);
 
-    const value = c.g_dbus_connection_call_sync(
-        dbus_connection,
-        "org.freedesktop.portal.Desktop",
-        "/org/freedesktop/portal/desktop",
-        "org.freedesktop.portal.Settings",
-        "ReadOne",
-        c.g_variant_new("(ss)", "org.freedesktop.appearance", "color-scheme"),
-        c.G_VARIANT_TYPE("(v)"),
-        c.G_DBUS_CALL_FLAGS_NONE,
-        -1,
-        null,
-        &err,
-    ) orelse {
-        if (err) |e| log.err("unable to get current color scheme: {s}", .{e.message});
-        return .light;
-    };
-    defer c.g_variant_unref(value);
-
-    if (c.g_variant_is_of_type(value, c.G_VARIANT_TYPE("(v)")) == 1) {
-        var inner: ?*c.GVariant = null;
-        c.g_variant_get(value, "(v)", &inner);
-        defer c.g_variant_unref(inner);
-        if (c.g_variant_is_of_type(inner, c.G_VARIANT_TYPE("u")) == 1) {
-            return if (c.g_variant_get_uint32(inner) == 1) .dark else .light;
+    if (c.g_dbus_connection_call_finish(dbus, res, &err)) |value| {
+        if (c.g_variant_is_of_type(value, c.G_VARIANT_TYPE("(v)")) == 1) {
+            var inner: ?*c.GVariant = null;
+            c.g_variant_get(value, "(v)", &inner);
+            defer c.g_variant_unref(inner);
+            if (c.g_variant_is_of_type(inner, c.G_VARIANT_TYPE("u")) == 1) {
+                self.colorSchemeEvent(if (c.g_variant_get_uint32(inner) == 1)
+                    .dark
+                else
+                    .light);
+                return;
+            }
         }
+    } else if (err) |e| {
+        // If ReadOne is not yet implemented, fall back to deprecated "Read" method
+        // Error code: GDBus.Error:org.freedesktop.DBus.Error.UnknownMethod: No such method “ReadOne”
+        if (self.dbus_color_scheme_retry and e.code == 19) {
+            self.dbus_color_scheme_retry = false;
+            c.g_dbus_connection_call(
+                dbus,
+                "org.freedesktop.portal.Desktop",
+                "/org/freedesktop/portal/desktop",
+                "org.freedesktop.portal.Settings",
+                "Read",
+                c.g_variant_new("(ss)", "org.freedesktop.appearance", "color-scheme"),
+                c.G_VARIANT_TYPE("(v)"),
+                c.G_DBUS_CALL_FLAGS_NONE,
+                -1,
+                null,
+                dbusColorSchemeCallback,
+                self,
+            );
+            return;
+        }
+
+        // Otherwise, log the error and return .light
+        log.warn("unable to get current color scheme: {s}", .{e.message});
     }
 
-    return .light;
+    // Fall back
+    self.colorSchemeEvent(.light);
 }
 
 /// This will be called by D-Bus when the style changes between light & dark.
@@ -1497,7 +1734,9 @@ fn gtkActionQuit(
     ud: ?*anyopaque,
 ) callconv(.C) void {
     const self: *App = @ptrCast(@alignCast(ud orelse return));
-    self.core_app.setQuit();
+    self.core_app.performAction(self, .quit) catch |err| {
+        log.err("error quitting err={}", .{err});
+    };
 }
 
 /// Action sent by the window manager asking us to present a specific surface to
@@ -1516,7 +1755,7 @@ fn gtkActionPresentSurface(
 
     // Convert that u64 to pointer to a core surface. A value of zero
     // means that there was no target surface for the notification so
-    // we dont' focus any surface.
+    // we don't focus any surface.
     const ptr_int: u64 = c.g_variant_get_uint64(parameter);
     if (ptr_int == 0) return;
     const surface: *CoreSurface = @ptrFromInt(ptr_int);
@@ -1569,18 +1808,17 @@ fn initActions(self: *App) void {
     }
 }
 
-/// This sets the self.menu property to the application menu that can be
-/// shared by all application windows.
-fn initMenu(self: *App) void {
-    const menu = c.g_menu_new();
-    errdefer c.g_object_unref(menu);
-
+/// Initializes and populates the provided GMenu with sections and actions.
+/// This function is used to set up the application's menu structure, either for
+/// the main menu button or as a context menu when window decorations are disabled.
+fn initMenuContent(menu: *c.GMenu) void {
     {
         const section = c.g_menu_new();
         defer c.g_object_unref(section);
         c.g_menu_append_section(menu, null, @ptrCast(@alignCast(section)));
         c.g_menu_append(section, "New Window", "win.new_window");
         c.g_menu_append(section, "New Tab", "win.new_tab");
+        c.g_menu_append(section, "Close Tab", "win.close_tab");
         c.g_menu_append(section, "Split Right", "win.split_right");
         c.g_menu_append(section, "Split Down", "win.split_down");
         c.g_menu_append(section, "Close Window", "win.close");
@@ -1595,13 +1833,14 @@ fn initMenu(self: *App) void {
         c.g_menu_append(section, "Reload Configuration", "app.reload-config");
         c.g_menu_append(section, "About Ghostty", "win.about");
     }
+}
 
-    // {
-    //     const section = c.g_menu_new();
-    //     defer c.g_object_unref(section);
-    //     c.g_menu_append_submenu(menu, "File", @ptrCast(@alignCast(section)));
-    // }
-
+/// This sets the self.menu property to the application menu that can be
+/// shared by all application windows.
+fn initMenu(self: *App) void {
+    const menu = c.g_menu_new();
+    errdefer c.g_object_unref(menu);
+    initMenuContent(@ptrCast(menu));
     self.menu = menu;
 }
 
@@ -1609,7 +1848,13 @@ fn initContextMenu(self: *App) void {
     const menu = c.g_menu_new();
     errdefer c.g_object_unref(menu);
 
-    createContextMenuCopyPasteSection(menu, false);
+    {
+        const section = c.g_menu_new();
+        defer c.g_object_unref(section);
+        c.g_menu_append_section(menu, null, @ptrCast(@alignCast(section)));
+        c.g_menu_append(section, "Copy", "win.copy");
+        c.g_menu_append(section, "Paste", "win.paste");
+    }
 
     {
         const section = c.g_menu_new();
@@ -1627,21 +1872,21 @@ fn initContextMenu(self: *App) void {
         c.g_menu_append(section, "Terminal Inspector", "win.toggle_inspector");
     }
 
+    const section = c.g_menu_new();
+    defer c.g_object_unref(section);
+    const submenu = c.g_menu_new();
+    defer c.g_object_unref(submenu);
+
+    initMenuContent(@ptrCast(submenu));
+    c.g_menu_append_submenu(section, "Menu", @ptrCast(@alignCast(submenu)));
+    c.g_menu_append_section(menu, null, @ptrCast(@alignCast(section)));
+
     self.context_menu = menu;
 }
 
-fn createContextMenuCopyPasteSection(menu: ?*c.GMenu, has_selection: bool) void {
-    const section = c.g_menu_new();
-    defer c.g_object_unref(section);
-    c.g_menu_prepend_section(menu, null, @ptrCast(@alignCast(section)));
-    // FIXME: Feels really hackish, but disabling sensitivity on this doesn't seems to work(?)
-    c.g_menu_append(section, "Copy", if (has_selection) "win.copy" else "noop");
-    c.g_menu_append(section, "Paste", "win.paste");
-}
-
-pub fn refreshContextMenu(self: *App, has_selection: bool) void {
-    c.g_menu_remove(self.context_menu, 0);
-    createContextMenuCopyPasteSection(self.context_menu, has_selection);
+pub fn refreshContextMenu(_: *App, window: ?*c.GtkWindow, has_selection: bool) void {
+    const action: ?*c.GSimpleAction = @ptrCast(c.g_action_map_lookup_action(@ptrCast(window), "copy"));
+    c.g_simple_action_set_enabled(action, if (has_selection) 1 else 0);
 }
 
 fn isValidAppId(app_id: [:0]const u8) bool {

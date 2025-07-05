@@ -4,6 +4,7 @@ const internal_os = @import("main.zig");
 const build_config = @import("../build_config.zig");
 const Allocator = std.mem.Allocator;
 const ArenaAllocator = std.heap.ArenaAllocator;
+const posix = std.posix;
 
 const log = std.log.scoped(.passwd);
 
@@ -88,13 +89,13 @@ pub fn get(alloc: Allocator) !Entry {
         // Once started, we can close the child side. We do this after
         // wait right now but that is fine too. This lets us read the
         // parent and detect EOF.
-        _ = std.os.close(pty.slave);
+        _ = posix.close(pty.slave);
 
         // Read all of our output
         const output = output: {
             var output: std.ArrayListUnmanaged(u8) = .{};
             while (true) {
-                const n = std.os.read(pty.master, &buf) catch |err| {
+                const n = posix.read(pty.master, &buf) catch |err| {
                     switch (err) {
                         // EIO is triggered at the end since we closed our
                         // child side. This is just EOF for this. I'm not sure

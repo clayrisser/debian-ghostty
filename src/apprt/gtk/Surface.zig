@@ -6,6 +6,7 @@ const Surface = @This();
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const build_config = @import("../../build_config.zig");
+const build_options = @import("build_options");
 const configpkg = @import("../../config.zig");
 const apprt = @import("../../apprt.zig");
 const font = @import("../../font/main.zig");
@@ -24,7 +25,6 @@ const ResizeOverlay = @import("ResizeOverlay.zig");
 const inspector = @import("inspector.zig");
 const gtk_key = @import("key.zig");
 const c = @import("c.zig").c;
-const x11 = @import("x11.zig");
 
 const log = std.log.scoped(.gtk_surface);
 
@@ -346,6 +346,14 @@ cursor: ?*c.GdkCursor = null,
 /// pass it to GTK.
 title_text: ?[:0]const u8 = null,
 
+/// Our current working directory. We use this value for setting tooltips in
+/// the headerbar subtitle if we have focus. When set, the text in this buf
+/// will be null-terminated because we need to pass it to GTK.
+pwd: ?[:0]const u8 = null,
+
+/// The timer used to delay title updates in order to prevent flickering.
+update_title_timer: ?c.guint = null,
+
 /// The core surface backing this surface
 core_surface: CoreSurface,
 
@@ -360,16 +368,29 @@ cursor_pos: apprt.CursorPos,
 inspector: ?*inspector.Inspector = null,
 
 /// Key input states. See gtkKeyPressed for detailed descriptions.
-in_keypress: bool = false,
+in_keyevent: IMKeyEvent = .false,
 im_context: *c.GtkIMContext,
 im_composing: bool = false,
-im_commit_buffered: bool = false,
 im_buf: [128]u8 = undefined,
 im_len: u7 = 0,
 
 /// The surface-specific cgroup path. See App.transient_cgroup_path for
 /// details on what this is.
 cgroup_path: ?[]const u8 = null,
+
+/// The state of the key event while we're doing IM composition.
+/// See gtkKeyPressed for detailed descriptions.
+pub const IMKeyEvent = enum {
+    /// Not in a key event.
+    false,
+
+    /// In a key event but im_composing was either true or false
+    /// prior to the calling IME processing. This is important to
+    /// work around different input methods calling commit and
+    /// preedit end in a different order.
+    composing,
+    not_composing,
+};
 
 /// Configuration used for initializing the surface. We have to copy some
 /// data since initialization is delayed with GTK (on realize).
@@ -488,6 +509,17 @@ pub fn init(self: *Surface, app: *App, opts: Options) !void {
     c.gtk_widget_set_focusable(gl_area, 1);
     c.gtk_widget_set_focus_on_click(gl_area, 1);
 
+    // Set up to handle items being dropped on our surface. Files can be dropped
+    // from Nautilus and strings can be dropped from many programs.
+    const drop_target = c.gtk_drop_target_new(c.G_TYPE_INVALID, c.GDK_ACTION_COPY);
+    errdefer c.g_object_unref(drop_target);
+    var drop_target_types = [_]c.GType{
+        c.gdk_file_list_get_type(),
+        c.G_TYPE_STRING,
+    };
+    c.gtk_drop_target_set_gtypes(drop_target, @ptrCast(&drop_target_types), drop_target_types.len);
+    c.gtk_widget_add_controller(@ptrCast(overlay), @ptrCast(drop_target));
+
     // Inherit the parent's font size if we have a parent.
     const font_size: ?font.face.DesiredSize = font_size: {
         if (!app.config.@"window-inherit-font-size") break :font_size null;
@@ -506,7 +538,7 @@ pub fn init(self: *Surface, app: *App, opts: Options) !void {
         var buf: [256]u8 = undefined;
         const name = std.fmt.bufPrint(
             &buf,
-            "surfaces/{X}.service",
+            "surfaces/{X}.scope",
             .{@intFromPtr(self)},
         ) catch unreachable;
 
@@ -541,7 +573,7 @@ pub fn init(self: *Surface, app: *App, opts: Options) !void {
         .font_size = font_size,
         .init_config = init_config,
         .size = .{ .width = 800, .height = 600 },
-        .cursor_pos = .{ .x = 0, .y = 0 },
+        .cursor_pos = .{ .x = -1, .y = -1 },
         .im_context = im_context,
         .cgroup_path = cgroup_path,
     };
@@ -570,6 +602,7 @@ pub fn init(self: *Surface, app: *App, opts: Options) !void {
     _ = c.g_signal_connect_data(im_context, "preedit-changed", c.G_CALLBACK(&gtkInputPreeditChanged), self, null, c.G_CONNECT_DEFAULT);
     _ = c.g_signal_connect_data(im_context, "preedit-end", c.G_CALLBACK(&gtkInputPreeditEnd), self, null, c.G_CONNECT_DEFAULT);
     _ = c.g_signal_connect_data(im_context, "commit", c.G_CALLBACK(&gtkInputCommit), self, null, c.G_CONNECT_DEFAULT);
+    _ = c.g_signal_connect_data(drop_target, "drop", c.G_CALLBACK(&gtkDrop), self, null, c.G_CONNECT_DEFAULT);
 }
 
 fn realize(self: *Surface) !void {
@@ -614,9 +647,6 @@ fn realize(self: *Surface) !void {
         try self.core_surface.setFontSize(size);
     }
 
-    // Set the initial color scheme
-    try self.core_surface.colorSchemeCallback(self.app.getColorScheme());
-
     // Note we're realized
     self.realized = true;
 }
@@ -624,6 +654,7 @@ fn realize(self: *Surface) !void {
 pub fn deinit(self: *Surface) void {
     self.init_config.deinit(self.app.core_app.alloc);
     if (self.title_text) |title| self.app.core_app.alloc.free(title);
+    if (self.pwd) |pwd| self.app.core_app.alloc.free(pwd);
 
     // We don't allocate anything if we aren't realized.
     if (!self.realized) return;
@@ -647,6 +678,7 @@ pub fn deinit(self: *Surface) void {
     // and therefore the unfocused_overlay has been destroyed as well.
     c.g_object_unref(self.im_context);
     if (self.cursor) |cursor| c.g_object_unref(cursor);
+    if (self.update_title_timer) |timer| _ = c.g_source_remove(timer);
     self.resize_overlay.deinit();
 }
 
@@ -785,15 +817,23 @@ pub fn shouldClose(self: *const Surface) bool {
 }
 
 pub fn getContentScale(self: *const Surface) !apprt.ContentScale {
-    // Future: detect GTK version 4.12+ and use gdk_surface_get_scale so we
-    // can support fractional scaling.
-    const gtk_scale: f32 = @floatFromInt(c.gtk_widget_get_scale_factor(@ptrCast(self.gl_area)));
+    const gtk_scale: f32 = scale: {
+        // Future: detect GTK version 4.12+ and use gdk_surface_get_scale so we
+        // can support fractional scaling.
+        const scale = c.gtk_widget_get_scale_factor(@ptrCast(self.gl_area));
+        if (scale <= 0) {
+            log.warn("gtk_widget_get_scale_factor returned a non-positive number: {d}", .{scale});
+            break :scale 1.0;
+        }
+        break :scale @floatFromInt(scale);
+    };
 
-    // If we are on X11, we also have to scale using Xft.dpi
-    const xft_dpi_scale = if (!x11.is_current_display_server()) 1.0 else xft_scale: {
-        // Here we use GTK to retrieve gtk-xft-dpi, which is Xft.dpi multiplied
-        // by 1024. See https://docs.gtk.org/gtk4/property.Settings.gtk-xft-dpi.html
-        const settings = c.gtk_settings_get_default();
+    // Also scale using font-specific DPI, which is often exposed to the user
+    // via DE accessibility settings (see https://docs.gtk.org/gtk4/class.Settings.html).
+    const xft_dpi_scale = xft_scale: {
+        // gtk-xft-dpi is font DPI multiplied by 1024. See
+        // https://docs.gtk.org/gtk4/property.Settings.gtk-xft-dpi.html
+        const settings = c.gtk_settings_get_default() orelse break :xft_scale 1.0;
 
         var value: c.GValue = std.mem.zeroes(c.GValue);
         defer c.g_value_unset(&value);
@@ -801,12 +841,21 @@ pub fn getContentScale(self: *const Surface) !apprt.ContentScale {
         c.g_object_get_property(@ptrCast(@alignCast(settings)), "gtk-xft-dpi", &value);
         const gtk_xft_dpi = c.g_value_get_int(&value);
 
-        // As noted above Xft.dpi is multiplied by 1024, so we divide by 1024,
-        // then divide by the default value of Xft.dpi (96) to derive a scale.
-        // Note that gtk-xft-dpi can be fractional, so we use floating point
-        // math here.
-        const xft_dpi: f32 = @as(f32, @floatFromInt(gtk_xft_dpi)) / 1024;
-        break :xft_scale xft_dpi / 96;
+        // Use a value of 1.0 for the XFT DPI scale if the setting is <= 0
+        // See:
+        // https://gitlab.gnome.org/GNOME/libadwaita/-/commit/a7738a4d269bfdf4d8d5429ca73ccdd9b2450421
+        // https://gitlab.gnome.org/GNOME/libadwaita/-/commit/9759d3fd81129608dd78116001928f2aed974ead
+        // ensure that the scale is never negative
+        if (gtk_xft_dpi <= 0) {
+            log.warn("gtk-xft-dpi was not set, using default value", .{});
+            break :xft_scale 1.0;
+        }
+
+        // As noted above gtk-xft-dpi is multiplied by 1024, so we divide by
+        // 1024, then divide by the default value (96) to derive a scale. Note
+        // gtk-xft-dpi can be fractional, so we use floating point math here.
+        const xft_dpi: f32 = @as(f32, @floatFromInt(gtk_xft_dpi)) / 1024.0;
+        break :xft_scale xft_dpi / 96.0;
     };
 
     const scale = gtk_scale * xft_dpi_scale;
@@ -832,6 +881,28 @@ pub fn setInitialWindowSize(self: *const Surface, width: u32, height: u32) !void
         @ptrCast(window.window),
         @intCast(width),
         @intCast(height),
+    );
+}
+
+pub fn setSizeLimits(self: *const Surface, min: apprt.SurfaceSize, max_: ?apprt.SurfaceSize) !void {
+
+    // There's no support for setting max size at the moment.
+    _ = max_;
+
+    // If we are within a split, do not set the size.
+    if (self.container.split() != null) return;
+
+    // This operation only makes sense if we're within a window view
+    // hierarchy and we're the first tab in the window.
+    const window = self.container.window() orelse return;
+    if (window.notebook.nPages() > 1) return;
+
+    // Note: this doesn't properly take into account the window decorations.
+    // I'm not currently sure how to do that.
+    c.gtk_widget_set_size_request(
+        @ptrCast(window.window),
+        @intCast(min.width),
+        @intCast(min.height),
     );
 }
 
@@ -871,7 +942,7 @@ fn updateTitleLabels(self: *Surface) void {
             // I don't know a way around this yet. I've tried re-hiding the
             // cursor after setting the title but it doesn't work, I think
             // due to some gtk event loop things...
-            c.gtk_window_set_title(window.window, title.ptr);
+            window.setTitle(title);
         }
     }
 }
@@ -894,7 +965,23 @@ pub fn setTitle(self: *Surface, slice: [:0]const u8) !void {
     if (self.title_text) |old| alloc.free(old);
     self.title_text = copy;
 
+    // delay the title update to prevent flickering
+    if (self.update_title_timer) |timer| {
+        if (c.g_source_remove(timer) == c.FALSE) {
+            log.warn("unable to remove update title timer", .{});
+        }
+        self.update_title_timer = null;
+    }
+    self.update_title_timer = c.g_timeout_add(75, updateTitleTimerExpired, self);
+}
+
+fn updateTitleTimerExpired(ctx: ?*anyopaque) callconv(.C) c.gboolean {
+    const self: *Surface = @ptrCast(@alignCast(ctx));
+
     self.updateTitleLabels();
+    self.update_title_timer = null;
+
+    return c.FALSE;
 }
 
 pub fn getTitle(self: *Surface) ?[:0]const u8 {
@@ -908,11 +995,27 @@ pub fn getTitle(self: *Surface) ?[:0]const u8 {
     return null;
 }
 
+/// Set the current working directory of the surface.
+///
+/// In addition, update the tab's tooltip text, and if we are the focused child,
+/// update the subtitle of the containing window.
 pub fn setPwd(self: *Surface, pwd: [:0]const u8) !void {
-    // If we have a tab and are the focused child, then we have to update the tab
     if (self.container.tab()) |tab| {
         tab.setTooltipText(pwd);
+
+        if (tab.focus_child == self) {
+            if (self.container.window()) |window| {
+                if (self.app.config.@"window-subtitle" == .@"working-directory") window.setSubtitle(pwd);
+            }
+        }
     }
+
+    const alloc = self.app.core_app.alloc;
+
+    // Failing to set the surface's current working directory is not a big
+    // deal since we just used our slice parameter which is the same value.
+    if (self.pwd) |old| alloc.free(old);
+    self.pwd = alloc.dupeZ(u8, pwd) catch null;
 }
 
 pub fn setMouseShape(
@@ -1059,6 +1162,13 @@ pub fn setClipboardString(
     if (!confirm) {
         const clipboard = getClipboard(@ptrCast(self.gl_area), clipboard_type);
         c.gdk_clipboard_set_text(clipboard, val.ptr);
+        // We only toast if we are copying to the standard clipboard.
+        if (clipboard_type == .standard and
+            self.app.config.@"app-notifications".@"clipboard-copy")
+        {
+            if (self.container.window()) |window|
+                window.sendToast("Copied to clipboard");
+        }
         return;
     }
 
@@ -1177,13 +1287,15 @@ fn showContextMenu(self: *Surface, x: f32, y: f32) void {
         return;
     };
 
+    // Convert surface coordinate into coordinate space of the
+    // context menu's parent
     var point: c.graphene_point_t = .{ .x = x, .y = y };
     if (c.gtk_widget_compute_point(
         self.primaryWidget(),
-        @ptrCast(window.window),
+        c.gtk_widget_get_parent(@ptrCast(window.context_menu)),
         &c.GRAPHENE_POINT_INIT(point.x, point.y),
         @ptrCast(&point),
-    ) == c.False) {
+    ) == 0) {
         log.warn("failed computing point for context menu", .{});
         return;
     }
@@ -1196,7 +1308,7 @@ fn showContextMenu(self: *Surface, x: f32, y: f32) void {
     };
 
     c.gtk_popover_set_pointing_to(@ptrCast(@alignCast(window.context_menu)), &rect);
-    self.app.refreshContextMenu(self.core_surface.hasSelection());
+    self.app.refreshContextMenu(window.window, self.core_surface.hasSelection());
     c.gtk_popover_popup(@ptrCast(@alignCast(window.context_menu)));
 }
 
@@ -1230,14 +1342,35 @@ fn gtkRealize(area: *c.GtkGLArea, ud: ?*anyopaque) callconv(.C) void {
 /// This is called when the underlying OpenGL resources must be released.
 /// This is usually due to the OpenGL area changing GDK surfaces.
 fn gtkUnrealize(area: *c.GtkGLArea, ud: ?*anyopaque) callconv(.C) void {
-    _ = area;
-
-    log.debug("gl surface unrealized", .{});
     const self = userdataSelf(ud.?);
-    self.core_surface.renderer.displayUnrealized();
+    log.debug("gl surface unrealized", .{});
 
     // See gtkRealize for why we do this here.
     c.gtk_im_context_set_client_widget(self.im_context, null);
+
+    // There is no guarantee that our GLArea context is current
+    // when unrealize is emitted, so we need to make it current.
+    c.gtk_gl_area_make_current(area);
+    if (c.gtk_gl_area_get_error(area)) |err| {
+        // I don't know a scenario this can happen, but it means
+        // we probably leaked memory because displayUnrealized
+        // below frees resources that aren't specifically OpenGL
+        // related. I didn't make the OpenGL renderer handle this
+        // scenario because I don't know if its even possible
+        // under valid circumstances, so let's log.
+        const message: []const u8 = if (err.*.message) |v|
+            std.mem.span(v)
+        else
+            "(no message)";
+        log.warn(
+            "gl_area_make_current failed in unrealize msg={s}",
+            .{message},
+        );
+        log.warn("OpenGL resources and memory likely leaked", .{});
+        return;
+    } else {
+        self.core_surface.renderer.displayUnrealized();
+    }
 }
 
 /// render signal
@@ -1299,6 +1432,12 @@ fn gtkResize(area: *c.GtkGLArea, width: c.gint, height: c.gint, ud: ?*anyopaque)
             log.err("error in size callback err={}", .{err});
             return;
         };
+
+        if (self.container.window()) |window| {
+            window.winproto.resizeEvent() catch |err| {
+                log.warn("failed to notify window protocol of resize={}", .{err});
+            };
+        }
 
         self.resize_overlay.maybeShow();
     }
@@ -1405,23 +1544,37 @@ fn gtkMouseMotion(
         .y = @floatCast(scaled.y),
     };
 
-    // Our pos changed, update
-    self.cursor_pos = pos;
+    // There seem to be at least two cases where GTK issues a mouse motion
+    // event without the cursor actually moving:
+    // 1. GLArea is resized under the mouse. This has the unfortunate
+    //    side effect of causing focus to potentially change when
+    //    `focus-follows-mouse` is enabled.
+    // 2. The window title is updated. This can cause the mouse to unhide
+    //    incorrectly when hide-mouse-when-typing is enabled.
+    // To prevent incorrect behavior, we'll only grab focus and
+    // continue with callback logic if the cursor has actually moved.
+    const is_cursor_still = @abs(self.cursor_pos.x - pos.x) < 1 and
+        @abs(self.cursor_pos.y - pos.y) < 1;
 
-    // If we don't have focus, and we want it, grab it.
-    const gl_widget = @as(*c.GtkWidget, @ptrCast(self.gl_area));
-    if (c.gtk_widget_has_focus(gl_widget) == 0 and self.app.config.@"focus-follows-mouse") {
-        self.grabFocus();
+    if (!is_cursor_still) {
+        // If we don't have focus, and we want it, grab it.
+        const gl_widget = @as(*c.GtkWidget, @ptrCast(self.gl_area));
+        if (c.gtk_widget_has_focus(gl_widget) == 0 and self.app.config.@"focus-follows-mouse") {
+            self.grabFocus();
+        }
+
+        // Our pos changed, update
+        self.cursor_pos = pos;
+
+        // Get our modifiers
+        const gtk_mods = c.gdk_event_get_modifier_state(event);
+        const mods = gtk_key.translateMods(gtk_mods);
+
+        self.core_surface.cursorPosCallback(self.cursor_pos, mods) catch |err| {
+            log.err("error in cursor pos callback err={}", .{err});
+            return;
+        };
     }
-
-    // Get our modifiers
-    const gtk_mods = c.gdk_event_get_modifier_state(event);
-    const mods = gtk_key.translateMods(gtk_mods);
-
-    self.core_surface.cursorPosCallback(self.cursor_pos, mods) catch |err| {
-        log.err("error in cursor pos callback err={}", .{err});
-        return;
-    };
 }
 
 fn gtkMouseLeave(
@@ -1501,30 +1654,36 @@ fn gtkKeyReleased(
     )) 1 else 0;
 }
 
-/// Key press event. This is where we do ALL of our key handling,
-/// translation to keyboard layouts, dead key handling, etc. Key handling
-/// is complicated so this comment will explain what's going on.
+/// Key press event (press or release).
 ///
 /// At a high level, we want to construct an `input.KeyEvent` and
 /// pass that to `keyCallback`. At a low level, this is more complicated
 /// than it appears because we need to construct all of this information
 /// and its not given to us.
 ///
-/// For press events, we run the keypress through the input method context
-/// in order to determine if we're in a dead key state, completed unicode
-/// char, etc. This all happens through various callbacks: preedit, commit,
-/// etc. These inspect "in_keypress" if they have to and set some instance
-/// state.
+/// For all events, we run the GdkEvent through the input method context.
+/// This allows the input method to capture the event and trigger
+/// callbacks such as preedit, commit, etc.
 ///
-/// We then take all of the information in order to determine if we have
+/// There are a couple important aspects to the prior paragraph: we must
+/// send ALL events through the input method context. This is because
+/// input methods use both key press and key release events to determine
+/// the state of the input method. For example, fcitx uses key release
+/// events on modifiers (i.e. ctrl+shift) to switch the input method.
+///
+/// We set some state to note we're in a key event (self.in_keyevent)
+/// because some of the input method callbacks change behavior based on
+/// this state. For example, we don't want to send character events
+/// like "a" via the input "commit" event if we're actively processing
+/// a keypress because we'd lose access to the keycode information.
+/// However, a "commit" event may still happen outside of a keypress
+/// event from e.g. a tablet or on-screen keyboard.
+///
+/// Finally, we take all of the information in order to determine if we have
 /// a unicode character or if we have to map the keyval to a code to
 /// get the underlying logical key, etc.
 ///
-/// Finally, we can emit the keyCallback.
-///
-/// Note we ALSO have an IMContext attached directly to the widget
-/// which can emit preedit and commit callbacks. But, if we're not
-/// in a keypress, we let those automatically work.
+/// Then we can emit the keyCallback.
 pub fn keyEvent(
     self: *Surface,
     action: input.Action,
@@ -1533,26 +1692,15 @@ pub fn keyEvent(
     keycode: c.guint,
     gtk_mods: c.GdkModifierType,
 ) bool {
+    // log.warn("GTKIM: keyEvent action={}", .{action});
     const event = c.gtk_event_controller_get_current_event(
         @ptrCast(ec_key),
     ) orelse return false;
 
-    const keyval_unicode = c.gdk_keyval_to_unicode(keyval);
-
-    // Get the unshifted unicode value of the keyval. This is used
-    // by the Kitty keyboard protocol.
-    const keyval_unicode_unshifted: u21 = gtk_key.keyvalUnicodeUnshifted(
-        @ptrCast(self.gl_area),
-        event,
-        keycode,
-    );
-
-    // We always reset our committed text when ending a keypress so that
-    // future keypresses don't think we have a commit event.
-    defer self.im_len = 0;
-
-    // We only want to send the event through the IM context if we're a press
-    if (action == .press or action == .repeat) {
+    // The block below is all related to input method handling. See the function
+    // comment for some high level details and then the comments within
+    // the block for more specifics.
+    {
         // This can trigger an input method so we need to notify the im context
         // where the cursor is so it can render the dropdowns in the correct
         // place.
@@ -1564,40 +1712,97 @@ pub fn keyEvent(
             .height = 1,
         });
 
-        // We mark that we're in a keypress event. We use this in our
-        // IM commit callback to determine if we need to send a char callback
-        // to the core surface or not.
-        self.in_keypress = true;
-        defer self.in_keypress = false;
+        // We note that we're in a keypress because we want some logic to
+        // depend on this. For example, we don't want to send character events
+        // like "a" via the input "commit" event if we're actively processing
+        // a keypress because we'd lose access to the keycode information.
+        //
+        // We have to maintain some additional state here of whether we
+        // were composing because different input methods call the callbacks
+        // in different orders. For example, ibus calls commit THEN preedit
+        // end but simple calls preedit end THEN commit.
+        self.in_keyevent = if (self.im_composing) .composing else .not_composing;
+        defer self.in_keyevent = .false;
 
-        // Pass the event through the IM controller to handle dead key states.
-        // Filter is true if the event was handled by the IM controller.
-        const im_handled = c.gtk_im_context_filter_keypress(self.im_context, event) != 0;
-        // log.warn("im_handled={} im_len={} im_composing={}", .{ im_handled, self.im_len, self.im_composing });
+        // Pass the event through the input method which returns true if handled.
+        // Confusingly, not all events handled by the input method result
+        // in this returning true so we have to maintain some additional
+        // state about whether we were composing or not to determine if
+        // we should proceed with key encoding.
+        //
+        // Cases where the input method does not mark the event as handled:
+        //
+        // - If we change the input method via keypress while we have preedit
+        //   text, the input method will commit the pending text but will not
+        //   mark it as handled. We use the `.composing` state to detect
+        //   this case.
+        //
+        // - If we switch input methods (i.e. via ctrl+shift with fcitx),
+        //   the input method will handle the key release event but will not
+        //   mark it as handled. I don't know any way to detect this case so
+        //   it will result in a key event being sent to the key callback.
+        //   For Kitty text encoding, this will result in modifiers being
+        //   triggered despite being technically consumed. At the time of
+        //   writing, both Kitty and Alacritty have the same behavior. I
+        //   know of no way to fix this.
+        const im_handled = c.gtk_im_context_filter_keypress(
+            self.im_context,
+            event,
+        ) != 0;
+        // log.warn("GTKIM: im_handled={} im_len={} im_composing={}", .{
+        //     im_handled,
+        //     self.im_len,
+        //     self.im_composing,
+        // });
 
-        // If this is a dead key, then we're composing a character and
-        // we need to set our proper preedit state.
-        if (self.im_composing) preedit: {
-            const text = self.im_buf[0..self.im_len];
-            self.core_surface.preeditCallback(text) catch |err| {
-                log.err("error in preedit callback err={}", .{err});
-                break :preedit;
-            };
+        // If the input method handled the event, you would think we would
+        // never proceed with key encoding for Ghostty but that is not the
+        // case. Input methods will handle basic character encoding like
+        // typing "a" and we want to associate that with the key event.
+        // So we have to check additional state to determine if we exit.
+        if (im_handled) {
+            // If we are composing then we're in a preedit state and do
+            // not want to encode any keys. For example: type a deadkey
+            // such as single quote on a US international keyboard layout.
+            if (self.im_composing) return true;
 
-            // If we're composing then we don't want to send the key
-            // event to the core surface so we always return immediately.
-            if (im_handled) return true;
-        } else {
-            // If we aren't composing, then we set our preedit to
-            // empty no matter what.
-            self.core_surface.preeditCallback(null) catch {};
+            // If we were composing and now we're not it means that we committed
+            // the text. We also don't want to encode a key event for this.
+            // Example: enable Japanese input method, press "konn" and then
+            // press enter. The final enter should not be encoded and "konn"
+            // (in hiragana) should be written as "こん".
+            if (self.in_keyevent == .composing) return true;
 
-            // If the IM handled this and we have no text, then we just
-            // return because this probably just changed the input method
-            // or something.
-            if (im_handled and self.im_len == 0) return true;
+            // Not composing and our input method buffer is empty. This could
+            // mean that the input method reacted to this event by activating
+            // an onscreen keyboard or something equivalent. We don't know.
+            // But the input method handled it and didn't give us text so
+            // we will just assume we should not encode this. This handles a
+            // real scenario when ibus starts the emoji input method
+            // (super+.).
+            if (self.im_len == 0) return true;
         }
+
+        // At this point, for the sake of explanation of internal state:
+        // it is possible that im_len > 0 and im_composing == false. This
+        // means that we received a commit event from the input method that
+        // we want associated with the key event. This is common: its how
+        // basic character translation for simple inputs like "a" work.
     }
+
+    // We always reset the length of the im buffer. There's only one scenario
+    // we reach this point with im_len > 0 and that's if we received a commit
+    // event from the input method. We don't want to keep that state around
+    // since we've handled it here.
+    defer self.im_len = 0;
+
+    // Get the keyvals for this event.
+    const keyval_unicode = c.gdk_keyval_to_unicode(keyval);
+    const keyval_unicode_unshifted: u21 = gtk_key.keyvalUnicodeUnshifted(
+        @ptrCast(self.gl_area),
+        event,
+        keycode,
+    );
 
     // We want to get the physical unmapped key to process physical keybinds.
     // (These are keybinds explicitly marked as requesting physical mapping).
@@ -1607,11 +1812,11 @@ pub fn keyEvent(
 
     // Get our modifier for the event
     const mods: input.Mods = gtk_key.eventMods(
-        @ptrCast(self.gl_area),
         event,
         physical_key,
         gtk_mods,
-        if (self.app.x11_xkb) |*xkb| xkb else null,
+        action,
+        &self.app.winproto,
     );
 
     // Get our consumed modifiers
@@ -1732,12 +1937,11 @@ fn gtkInputPreeditStart(
     _: *c.GtkIMContext,
     ud: ?*anyopaque,
 ) callconv(.C) void {
-    //log.debug("preedit start", .{});
+    // log.warn("GTKIM: preedit start", .{});
     const self = userdataSelf(ud.?);
-    if (!self.in_keypress) return;
 
-    // Mark that we are now composing a string with a dead key state.
-    // We'll record the string in the preedit-changed callback.
+    // Start our composing state for the input method and reset our
+    // input buffer to empty.
     self.im_composing = true;
     self.im_len = 0;
 }
@@ -1748,25 +1952,13 @@ fn gtkInputPreeditChanged(
 ) callconv(.C) void {
     const self = userdataSelf(ud.?);
 
-    // If there's buffered character, send the characters directly to the surface.
-    if (self.im_composing and self.im_commit_buffered) {
-        defer self.im_commit_buffered = false;
-        defer self.im_len = 0;
-        _ = self.core_surface.keyCallback(.{
-            .action = .press,
-            .key = .invalid,
-            .physical_key = .invalid,
-            .mods = .{},
-            .consumed_mods = .{},
-            .composing = false,
-            .utf8 = self.im_buf[0..self.im_len],
-        }) catch |err| {
-            log.err("error in key callback err={}", .{err});
-            return;
-        };
-    }
-
-    if (!self.in_keypress) return;
+    // Any preedit change should mark that we're composing. Its possible this
+    // is false using fcitx5-hangul and typing "dkssud<space>" ("안녕"). The
+    // second "s" results in a "commit" for "안" which sets composing to false,
+    // but then immediately sends a preedit change for the next symbol. With
+    // composing set to false we won't commit this text. Therefore, we must
+    // ensure it is set here.
+    self.im_composing = true;
 
     // Get our pre-edit string that we'll use to show the user.
     var buf: [*c]u8 = undefined;
@@ -1774,26 +1966,27 @@ fn gtkInputPreeditChanged(
     defer c.g_free(buf);
     const str = std.mem.sliceTo(buf, 0);
 
-    // If our string becomes empty we ignore this. This can happen after
-    // a commit event when the preedit is being cleared and we don't want
-    // to set im_len to zero. This is safe because preeditstart always sets
-    // im_len to zero.
-    if (str.len == 0) return;
-
-    // Copy the preedit string into the im_buf. This is safe because
-    // commit will always overwrite this.
-    self.im_len = @intCast(@min(self.im_buf.len, str.len));
-    @memcpy(self.im_buf[0..self.im_len], str);
+    // Update our preedit state in Ghostty core
+    // log.warn("GTKIM: preedit change str={s}", .{str});
+    self.core_surface.preeditCallback(str) catch |err| {
+        log.err("error in preedit callback err={}", .{err});
+    };
 }
 
 fn gtkInputPreeditEnd(
     _: *c.GtkIMContext,
     ud: ?*anyopaque,
 ) callconv(.C) void {
-    //log.debug("preedit end", .{});
+    // log.warn("GTKIM: preedit end", .{});
     const self = userdataSelf(ud.?);
-    if (!self.in_keypress) return;
+
+    // End our composing state for GTK, allowing us to commit the text.
     self.im_composing = false;
+
+    // End our preedit state in Ghostty core
+    self.core_surface.preeditCallback(null) catch |err| {
+        log.err("error in preedit callback err={}", .{err});
+    };
 }
 
 fn gtkInputCommit(
@@ -1804,35 +1997,64 @@ fn gtkInputCommit(
     const self = userdataSelf(ud.?);
     const str = std.mem.sliceTo(bytes, 0);
 
-    // If we're in a key event, then we want to buffer the commit so
-    // that we can send the proper keycallback followed by the char
-    // callback.
-    if (self.in_keypress) {
-        if (str.len <= self.im_buf.len) {
+    // log.debug("GTKIM: input commit composing={} keyevent={} str={s}", .{
+    //     self.im_composing,
+    //     self.in_keyevent,
+    //     str,
+    // });
+
+    // We need to handle commit specially if we're in a key event.
+    // Specifically, GTK will send us a commit event for basic key
+    // encodings like "a" (on a US layout keyboard). We don't want
+    // to treat this as IME committed text because we want to associate
+    // it with a key event (i.e. "a" key press).
+    switch (self.in_keyevent) {
+        // If we're not in a key event then this commit is from
+        // some other source (i.e. on-screen keyboard, tablet, etc.)
+        // and we want to commit the text to the core surface.
+        .false => {},
+
+        // If we're in a composing state and in a key event then this
+        // key event is resulting in a commit of multiple keypresses
+        // and we don't want to encode it alongside the keypress.
+        .composing => {},
+
+        // If we're not composing then this commit is just a normal
+        // key encoding and we want our key event to handle it so
+        // that Ghostty can be aware of the key event alongside
+        // the text.
+        .not_composing => {
+            if (str.len > self.im_buf.len) {
+                log.warn("not enough buffer space for input method commit", .{});
+                return;
+            }
+
+            // Copy our committed text to the buffer
             @memcpy(self.im_buf[0..str.len], str);
             self.im_len = @intCast(str.len);
 
-            // If composing is done and character should be committed,
-            // It should be committed in preedit callback.
-            if (self.im_composing) {
-                self.im_commit_buffered = true;
-            }
-
             // log.debug("input commit len={}", .{self.im_len});
-        } else {
-            log.warn("not enough buffer space for input method commit", .{});
-        }
-
-        return;
+            return;
+        },
     }
 
-    // This prevents staying in composing state after commit even though
-    // input method has changed.
+    // If we reach this point from above it means we're composing OR
+    // not in a keypress. In either case, we want to commit the text
+    // given to us because that's what GTK is asking us to do. If we're
+    // not in a keypress it means that this commit came via a non-keyboard
+    // event (i.e. on-screen keyboard, tablet of some kind, etc.).
+
+    // Committing ends composing state
     self.im_composing = false;
 
-    // We're not in a keypress, so this was sent from an on-screen emoji
-    // keyboard or something like that. Send the characters directly to
-    // the surface.
+    // End our preedit state. Well-behaved input methods do this for us
+    // by triggering a preedit-end event but some do not (ibus 1.5.29).
+    self.core_surface.preeditCallback(null) catch |err| {
+        log.err("error in preedit callback err={}", .{err});
+    };
+
+    // Send the text to the core surface, associated with no key (an
+    // invalid key, which should produce no PTY encoding).
     _ = self.core_surface.keyCallback(.{
         .action = .press,
         .key = .invalid,
@@ -1842,7 +2064,7 @@ fn gtkInputCommit(
         .composing = false,
         .utf8 = str,
     }) catch |err| {
-        log.err("error in key callback err={}", .{err});
+        log.warn("error in key callback err={}", .{err});
         return;
     };
 }
@@ -1858,6 +2080,12 @@ fn gtkFocusEnter(_: *c.GtkEventControllerFocus, ud: ?*anyopaque) callconv(.C) vo
     if (self.unfocused_widget) |widget| {
         c.gtk_overlay_remove_overlay(self.overlay, widget);
         self.unfocused_widget = null;
+    }
+
+    if (self.pwd) |pwd| {
+        if (self.container.window()) |window| {
+            if (self.app.config.@"window-subtitle" == .@"working-directory") window.setSubtitle(pwd);
+        }
     }
 
     // Notify our surface
@@ -1899,7 +2127,7 @@ pub fn dimSurface(self: *Surface) void {
     // Don't dim surface if context menu is open.
     // This means we got unfocused due to it opening.
     const context_menu_open = c.gtk_widget_get_visible(window.context_menu);
-    if (context_menu_open == c.True) return;
+    if (context_menu_open == 1) return;
 
     if (self.unfocused_widget != null) return;
     self.unfocused_widget = c.gtk_drawing_area_new();
@@ -1944,7 +2172,7 @@ pub fn present(self: *Surface) void {
     if (self.container.window()) |window| {
         if (self.container.tab()) |tab| {
             if (window.notebook.getTabPosition(tab)) |position|
-                window.notebook.gotoNthTab(position);
+                _ = window.notebook.gotoNthTab(position);
         }
         c.gtk_window_present(window.window);
     }
@@ -1988,4 +2216,115 @@ pub fn setSplitZoom(self: *Surface, new_split_zoom: bool) void {
 
 pub fn toggleSplitZoom(self: *Surface) void {
     self.setSplitZoom(!self.zoomed_in);
+}
+
+/// Handle items being dropped on our surface.
+fn gtkDrop(
+    _: *c.GtkDropTarget,
+    value: *c.GValue,
+    x: f64,
+    y: f64,
+    ud: ?*anyopaque,
+) callconv(.C) c.gboolean {
+    _ = x;
+    _ = y;
+    const self = userdataSelf(ud.?);
+    const alloc = self.app.core_app.alloc;
+
+    if (g_value_holds(value, c.G_TYPE_BOXED)) {
+        var data = std.ArrayList(u8).init(alloc);
+        defer data.deinit();
+
+        var shell_escape_writer: internal_os.ShellEscapeWriter(std.ArrayList(u8).Writer) = .{
+            .child_writer = data.writer(),
+        };
+        const writer = shell_escape_writer.writer();
+
+        const fl: *c.GdkFileList = @ptrCast(c.g_value_get_boxed(value));
+        var l = c.gdk_file_list_get_files(fl);
+
+        while (l != null) : (l = l.*.next) {
+            const file: *c.GFile = @ptrCast(l.*.data);
+            const path = c.g_file_get_path(file) orelse continue;
+
+            writer.writeAll(std.mem.span(path)) catch |err| {
+                log.err("unable to write path to buffer: {}", .{err});
+                continue;
+            };
+            writer.writeAll("\n") catch |err| {
+                log.err("unable to write to buffer: {}", .{err});
+                continue;
+            };
+        }
+
+        const string = data.toOwnedSliceSentinel(0) catch |err| {
+            log.err("unable to convert to a slice: {}", .{err});
+            return 1;
+        };
+        defer alloc.free(string);
+
+        self.doPaste(string);
+
+        return 1;
+    }
+
+    if (g_value_holds(value, c.G_TYPE_STRING)) {
+        if (c.g_value_get_string(value)) |string| {
+            self.doPaste(std.mem.span(string));
+        }
+        return 1;
+    }
+
+    return 1;
+}
+
+fn doPaste(self: *Surface, data: [:0]const u8) void {
+    if (data.len == 0) return;
+
+    self.core_surface.completeClipboardRequest(.paste, data, false) catch |err| switch (err) {
+        error.UnsafePaste,
+        error.UnauthorizedPaste,
+        => {
+            ClipboardConfirmationWindow.create(
+                self.app,
+                data,
+                &self.core_surface,
+                .paste,
+            ) catch |window_err| {
+                log.err("failed to create clipboard confirmation window err={}", .{window_err});
+            };
+        },
+        error.OutOfMemory,
+        error.NoSpaceLeft,
+        => log.err("failed to complete clipboard request err={}", .{err}),
+    };
+}
+
+pub fn defaultTermioEnv(self: *Surface) !std.process.EnvMap {
+    const alloc = self.app.core_app.alloc;
+    var env = try internal_os.getEnvMap(alloc);
+    errdefer env.deinit();
+
+    // Don't leak these GTK environment variables to child processes.
+    env.remove("GDK_DEBUG");
+    env.remove("GDK_DISABLE");
+    env.remove("GSK_RENDERER");
+
+    if (self.container.window()) |window| {
+        // On some window protocols we might want to add specific
+        // environment variables to subprocesses, such as WINDOWID on X11.
+        try window.winproto.addSubprocessEnv(&env);
+    }
+
+    return env;
+}
+
+/// Check a GValue to see what's type its wrapping. This is equivalent to GTK's
+/// `G_VALUE_HOLDS` macro but Zig's C translator does not like it.
+fn g_value_holds(value_: ?*c.GValue, g_type: c.GType) bool {
+    if (value_) |value| {
+        if (value.*.g_type == g_type) return true;
+        return c.g_type_check_value_holds(value, g_type) != 0;
+    }
+    return false;
 }

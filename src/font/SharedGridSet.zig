@@ -20,7 +20,7 @@ const Collection = font.Collection;
 const Discover = font.Discover;
 const Style = font.Style;
 const Library = font.Library;
-const Metrics = font.face.Metrics;
+const Metrics = font.Metrics;
 const CodepointMap = font.CodepointMap;
 const DesiredSize = font.face.DesiredSize;
 const Face = font.Face;
@@ -167,13 +167,13 @@ fn collection(
     const load_options: Collection.LoadOptions = .{
         .library = self.font_lib,
         .size = size,
-        .metric_modifiers = key.metric_modifiers,
         .freetype_load_flags = key.freetype_load_flags,
     };
 
     var c = Collection.init();
     errdefer c.deinit(self.alloc);
     c.load_options = load_options;
+    c.metric_modifiers = key.metric_modifiers;
 
     // Search for fonts
     if (Discover != void) discover: {

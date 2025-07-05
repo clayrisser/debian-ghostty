@@ -5,36 +5,59 @@ pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const module = b.addModule("oniguruma", .{ .root_source_file = b.path("main.zig") });
+    const module = b.addModule("oniguruma", .{
+        .root_source_file = b.path("main.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
 
-    const upstream = b.dependency("oniguruma", .{});
-    const lib = try buildOniguruma(b, upstream, target, optimize);
-    module.addIncludePath(upstream.path("src"));
-    b.installArtifact(lib);
+    // For dynamic linking, we prefer dynamic linking and to search by
+    // mode first. Mode first will search all paths for a dynamic library
+    // before falling back to static.
+    const dynamic_link_opts: std.Build.Module.LinkSystemLibraryOptions = .{
+        .preferred_link_mode = .dynamic,
+        .search_strategy = .mode_first,
+    };
 
+    var test_exe: ?*std.Build.Step.Compile = null;
     if (target.query.isNative()) {
-        const test_exe = b.addTest(.{
+        test_exe = b.addTest(.{
             .name = "test",
             .root_source_file = b.path("main.zig"),
             .target = target,
             .optimize = optimize,
         });
-        test_exe.linkLibrary(lib);
-        const tests_run = b.addRunArtifact(test_exe);
+        const tests_run = b.addRunArtifact(test_exe.?);
         const test_step = b.step("test", "Run tests");
         test_step.dependOn(&tests_run.step);
 
         // Uncomment this if we're debugging tests
-        b.installArtifact(test_exe);
+        b.installArtifact(test_exe.?);
+    }
+
+    if (b.systemIntegrationOption("oniguruma", .{})) {
+        module.linkSystemLibrary("oniguruma", dynamic_link_opts);
+
+        if (test_exe) |exe| {
+            exe.linkSystemLibrary2("oniguruma", dynamic_link_opts);
+        }
+    } else {
+        const lib = try buildLib(b, module, .{
+            .target = target,
+            .optimize = optimize,
+        });
+
+        if (test_exe) |exe| {
+            exe.linkLibrary(lib);
+        }
     }
 }
 
-fn buildOniguruma(
-    b: *std.Build,
-    upstream: *std.Build.Dependency,
-    target: std.Build.ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
-) !*std.Build.Step.Compile {
+fn buildLib(b: *std.Build, module: *std.Build.Module, options: anytype) !*std.Build.Step.Compile {
+    const target = options.target;
+    const optimize = options.optimize;
+
+    const upstream = b.dependency("oniguruma", .{});
     const lib = b.addStaticLibrary(.{
         .name = "oniguruma",
         .target = target,
@@ -43,6 +66,7 @@ fn buildOniguruma(
     const t = target.result;
     lib.linkLibC();
     lib.addIncludePath(upstream.path("src"));
+    module.addIncludePath(upstream.path("src"));
 
     if (target.result.isDarwin()) {
         const apple_sdk = @import("apple_sdk");
@@ -133,6 +157,8 @@ fn buildOniguruma(
         "",
         .{ .include_extensions = &.{".h"} },
     );
+
+    b.installArtifact(lib);
 
     return lib;
 }

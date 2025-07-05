@@ -236,7 +236,7 @@ const DerivedConfig = struct {
     clipboard_paste_protection: bool,
     clipboard_paste_bracketed_safe: bool,
     copy_on_select: configpkg.CopyOnSelect,
-    confirm_close_surface: bool,
+    confirm_close_surface: configpkg.ConfirmCloseSurface,
     cursor_click_to_move: bool,
     desktop_notifications: bool,
     font: font.SharedGridSet.DerivedConfig,
@@ -253,6 +253,7 @@ const DerivedConfig = struct {
     window_padding_right: u32,
     window_padding_balance: bool,
     title: ?[:0]const u8,
+    title_report: bool,
     links: []Link,
 
     const Link = struct {
@@ -313,6 +314,7 @@ const DerivedConfig = struct {
             .window_padding_right = config.@"window-padding-x".bottom_right,
             .window_padding_balance = config.@"window-padding-balance",
             .title = config.title,
+            .title_report = config.@"title-report",
             .links = links,
 
             // Assignments happen sequentially so we have to do this last
@@ -517,9 +519,18 @@ pub fn init(
     // This separate block ({}) is important because our errdefers must
     // be scoped here to be valid.
     {
+        var env = rt_surface.defaultTermioEnv() catch |err| env: {
+            // If an error occurs, we don't want to block surface startup.
+            log.warn("error getting env map for surface err={}", .{err});
+            break :env internal_os.getEnvMap(alloc) catch
+                std.process.EnvMap.init(alloc);
+        };
+        errdefer env.deinit();
+
         // Initialize our IO backend
         var io_exec = try termio.Exec.init(alloc, .{
             .command = command,
+            .env = env,
             .shell_integration = config.@"shell-integration",
             .shell_integration_features = config.@"shell-integration-features",
             .working_directory = config.@"working-directory",
@@ -559,7 +570,7 @@ pub fn init(
     errdefer self.io.deinit();
 
     // Report initial cell size on surface creation
-    try rt_app.performAction(
+    _ = try rt_app.performAction(
         .{ .surface = self },
         .cell_size,
         .{ .width = size.cell.width, .height = size.cell.height },
@@ -567,12 +578,16 @@ pub fn init(
 
     // Set a minimum size that is cols=10 h=4. This matches Mac's Terminal.app
     // but is otherwise somewhat arbitrary.
-    try rt_app.performAction(
+
+    const min_window_width_cells: u32 = 10;
+    const min_window_height_cells: u32 = 4;
+
+    _ = try rt_app.performAction(
         .{ .surface = self },
         .size_limit,
         .{
-            .min_width = size.cell.width * 10,
-            .min_height = size.cell.height * 4,
+            .min_width = size.cell.width * min_window_width_cells,
+            .min_height = size.cell.height * min_window_height_cells,
             // No max:
             .max_width = 0,
             .max_height = 0,
@@ -615,8 +630,8 @@ pub fn init(
     // start messing with the window.
     if (config.@"window-height" > 0 and config.@"window-width" > 0) init: {
         const scale = rt_surface.getContentScale() catch break :init;
-        const height = @max(config.@"window-height" * cell_size.height, 480);
-        const width = @max(config.@"window-width" * cell_size.width, 640);
+        const height = @max(config.@"window-height", min_window_height_cells) * cell_size.height;
+        const width = @max(config.@"window-width", min_window_width_cells) * cell_size.width;
         const width_f32: f32 = @floatFromInt(width);
         const height_f32: f32 = @floatFromInt(height);
 
@@ -631,7 +646,7 @@ pub fn init(
             size.padding.top +
             size.padding.bottom;
 
-        rt_app.performAction(
+        _ = rt_app.performAction(
             .{ .surface = self },
             .initial_size,
             .{ .width = final_width, .height = final_height },
@@ -643,7 +658,7 @@ pub fn init(
     }
 
     if (config.title) |title| {
-        try rt_app.performAction(
+        _ = try rt_app.performAction(
             .{ .surface = self },
             .set_title,
             .{ .title = title },
@@ -664,7 +679,7 @@ pub fn init(
                 break :xdg;
             };
             defer alloc.free(title);
-            try rt_app.performAction(
+            _ = try rt_app.performAction(
                 .{ .surface = self },
                 .set_title,
                 .{ .title = title },
@@ -784,18 +799,20 @@ pub fn deactivateInspector(self: *Surface) void {
 /// True if the surface requires confirmation to quit. This should be called
 /// by apprt to determine if the surface should confirm before quitting.
 pub fn needsConfirmQuit(self: *Surface) bool {
-    // If the child has exited then our process is certainly not alive.
+    // If the child has exited, then our process is certainly not alive.
     // We check this first to avoid the locking overhead below.
     if (self.child_exited) return false;
 
-    // If we are configured to not hold open surfaces explicitly, just
-    // always say there is nothing alive.
-    if (!self.config.confirm_close_surface) return false;
-
-    // We have to talk to the terminal.
-    self.renderer_state.mutex.lock();
-    defer self.renderer_state.mutex.unlock();
-    return !self.io.terminal.cursorIsAtPrompt();
+    // Check the configuration for confirming close behavior.
+    return switch (self.config.confirm_close_surface) {
+        .always => true,
+        .false => false,
+        .true => true: {
+            self.renderer_state.mutex.lock();
+            defer self.renderer_state.mutex.unlock();
+            break :true !self.io.terminal.cursorIsAtPrompt();
+        },
+    };
 }
 
 /// Called from the app thread to handle mailbox messages to our specific
@@ -815,14 +832,19 @@ pub fn handleMessage(self: *Surface, msg: Message) !void {
             // We know that our title should end in 0.
             const slice = std.mem.sliceTo(@as([*:0]const u8, @ptrCast(v)), 0);
             log.debug("changing title \"{s}\"", .{slice});
-            try self.rt_app.performAction(
+            _ = try self.rt_app.performAction(
                 .{ .surface = self },
                 .set_title,
                 .{ .title = slice },
             );
         },
 
-        .report_title => |style| {
+        .report_title => |style| report_title: {
+            if (!self.config.title_report) {
+                log.info("report_title requested, but disabled via config", .{});
+                break :report_title;
+            }
+
             const title: ?[:0]const u8 = self.rt_surface.getTitle();
             const data = switch (style) {
                 .csi_21_t => try std.fmt.allocPrint(
@@ -844,12 +866,9 @@ pub fn handleMessage(self: *Surface, msg: Message) !void {
         },
 
         .color_change => |change| {
-            // On any color change, we have to report for mode 2031
-            // if it is enabled.
-            self.reportColorScheme(false);
-
-            // Notify our apprt
-            try self.rt_app.performAction(
+            // Notify our apprt, but don't send a mode 2031 DSR report
+            // because VT sequences were used to change the color.
+            _ = try self.rt_app.performAction(
                 .{ .surface = self },
                 .color_change,
                 .{
@@ -868,7 +887,7 @@ pub fn handleMessage(self: *Surface, msg: Message) !void {
 
         .set_mouse_shape => |shape| {
             log.debug("changing mouse shape: {}", .{shape});
-            try self.rt_app.performAction(
+            _ = try self.rt_app.performAction(
                 .{ .surface = self },
                 .mouse_shape,
                 shape,
@@ -900,7 +919,7 @@ pub fn handleMessage(self: *Surface, msg: Message) !void {
             const str = try self.alloc.dupeZ(u8, w.slice());
             defer self.alloc.free(str);
 
-            try self.rt_app.performAction(
+            _ = try self.rt_app.performAction(
                 .{ .surface = self },
                 .pwd,
                 .{ .pwd = str },
@@ -951,7 +970,7 @@ fn passwordInput(self: *Surface, v: bool) !void {
     }
 
     // Notify our apprt so it can do whatever it wants.
-    self.rt_app.performAction(
+    _ = self.rt_app.performAction(
         .{ .surface = self },
         .secure_input,
         if (v) .on else .off,
@@ -1031,13 +1050,16 @@ fn mouseRefreshLinks(
     pos_vp: terminal.point.Coordinate,
     over_link: bool,
 ) !void {
+    // If the position is outside our viewport, do nothing
+    if (pos.x < 0 or pos.y < 0) return;
+
     self.mouse.link_point = pos_vp;
 
     if (try self.linkAtPos(pos)) |link| {
         self.renderer_state.mouse.point = pos_vp;
         self.mouse.over_link = true;
         self.renderer_state.terminal.screen.dirty.hyperlink_hover = true;
-        try self.rt_app.performAction(
+        _ = try self.rt_app.performAction(
             .{ .surface = self },
             .mouse_shape,
             .pointer,
@@ -1050,7 +1072,7 @@ fn mouseRefreshLinks(
                     .trim = false,
                 });
                 defer self.alloc.free(str);
-                try self.rt_app.performAction(
+                _ = try self.rt_app.performAction(
                     .{ .surface = self },
                     .mouse_over_link,
                     .{ .url = str },
@@ -1064,7 +1086,7 @@ fn mouseRefreshLinks(
                     log.warn("failed to get URI for OSC8 hyperlink", .{});
                     break :link;
                 };
-                try self.rt_app.performAction(
+                _ = try self.rt_app.performAction(
                     .{ .surface = self },
                     .mouse_over_link,
                     .{ .url = uri },
@@ -1074,12 +1096,12 @@ fn mouseRefreshLinks(
 
         try self.queueRender();
     } else if (over_link) {
-        try self.rt_app.performAction(
+        _ = try self.rt_app.performAction(
             .{ .surface = self },
             .mouse_shape,
             self.io.terminal.mouse_shape,
         );
-        try self.rt_app.performAction(
+        _ = try self.rt_app.performAction(
             .{ .surface = self },
             .mouse_over_link,
             .{ .url = "" },
@@ -1091,7 +1113,7 @@ fn mouseRefreshLinks(
 /// Called when our renderer health state changes.
 fn updateRendererHealth(self: *Surface, health: renderer.Health) void {
     log.warn("renderer health status change status={}", .{health});
-    self.rt_app.performAction(
+    _ = self.rt_app.performAction(
         .{ .surface = self },
         .renderer_health,
         health,
@@ -1103,7 +1125,7 @@ fn updateRendererHealth(self: *Surface, health: renderer.Health) void {
 /// This should be called anytime `config_conditional_state` changes
 /// so that the apprt can reload the configuration.
 fn notifyConfigConditionalState(self: *Surface) void {
-    self.rt_app.performAction(
+    _ = self.rt_app.performAction(
         .{ .surface = self },
         .reload_config,
         .{ .soft = true },
@@ -1150,7 +1172,6 @@ pub fn updateConfig(
     }
 
     // If we are in the middle of a key sequence, clear it.
-    self.keyboard.bindings = null;
     self.endKeySequence(.drop, .free);
 
     // Before sending any other config changes, we give the renderer a new font
@@ -1184,14 +1205,14 @@ pub fn updateConfig(
 
     // If we have a title set then we update our window to have the
     // newly configured title.
-    if (config.title) |title| try self.rt_app.performAction(
+    if (config.title) |title| _ = try self.rt_app.performAction(
         .{ .surface = self },
         .set_title,
         .{ .title = title },
     );
 
     // Notify the window
-    try self.rt_app.performAction(
+    _ = try self.rt_app.performAction(
         .{ .surface = self },
         .config_change,
         .{ .config = config },
@@ -1307,8 +1328,8 @@ pub fn imePoint(self: *const Surface) apprt.IMEPos {
     const content_scale = self.rt_surface.getContentScale() catch .{ .x = 1, .y = 1 };
 
     const x: f64 = x: {
-        // Simple x * cell width gives the top-left corner
-        var x: f64 = @floatFromInt(cursor.x * self.size.cell.width);
+        // Simple x * cell width gives the top-left corner, then add padding offset
+        var x: f64 = @floatFromInt(cursor.x * self.size.cell.width + self.size.padding.left);
 
         // We want the midpoint
         x += @as(f64, @floatFromInt(self.size.cell.width)) / 2;
@@ -1320,8 +1341,8 @@ pub fn imePoint(self: *const Surface) apprt.IMEPos {
     };
 
     const y: f64 = y: {
-        // Simple x * cell width gives the top-left corner
-        var y: f64 = @floatFromInt(cursor.y * self.size.cell.height);
+        // Simple y * cell height gives the top-left corner, then add padding offset
+        var y: f64 = @floatFromInt(cursor.y * self.size.cell.height + self.size.padding.top);
 
         // We want the bottom
         y += @floatFromInt(self.size.cell.height);
@@ -1458,7 +1479,7 @@ fn setCellSize(self: *Surface, size: renderer.CellSize) !void {
     self.io.queueMessage(.{ .resize = self.size }, .unlocked);
 
     // Notify the window
-    try self.rt_app.performAction(
+    _ = try self.rt_app.performAction(
         .{ .surface = self },
         .cell_size,
         .{ .width = size.width, .height = size.height },
@@ -1582,6 +1603,15 @@ pub fn preeditCallback(self: *Surface, preedit_: ?[]const u8) !void {
     self.renderer_state.mutex.lock();
     defer self.renderer_state.mutex.unlock();
 
+    // We clear our selection when ANY OF:
+    // 1. We have an existing preedit
+    // 2. We have preedit text
+    if (self.renderer_state.preedit != null or
+        preedit_ != null)
+    {
+        self.setSelection(null) catch {};
+    }
+
     // We always clear our prior preedit
     if (self.renderer_state.preedit) |p| {
         self.alloc.free(p.codepoints);
@@ -1632,13 +1662,38 @@ pub fn preeditCallback(self: *Surface, preedit_: ?[]const u8) !void {
     try self.queueRender();
 }
 
+/// Returns true if the given key event would trigger a keybinding
+/// if it were to be processed. This is useful for determining if
+/// a key event should be sent to the terminal or not.
+///
+/// Note that this function does not check if the binding itself
+/// is performable, only if the key event would trigger a binding.
+/// If a performable binding is found and the event is not performable,
+/// then Ghosty will act as though the binding does not exist.
+pub fn keyEventIsBinding(
+    self: *Surface,
+    event: input.KeyEvent,
+) bool {
+    switch (event.action) {
+        .release => return false,
+        .press, .repeat => {},
+    }
+
+    // Our keybinding set is either our current nested set (for
+    // sequences) or the root set.
+    const set = self.keyboard.bindings orelse &self.config.keybind.set;
+
+    // If we have a keybinding for this event then we return true.
+    return set.getEvent(event) != null;
+}
+
 /// Called for any key events. This handles keybindings, encoding and
 /// sending to the terminal, etc.
 pub fn keyCallback(
     self: *Surface,
     event: input.KeyEvent,
 ) !InputEffect {
-    // log.debug("text keyCallback event={}", .{event});
+    // log.warn("text keyCallback event={}", .{event});
 
     // Crash metadata in case we crash in here
     crash.sentry.thread_state = self.crashThreadState();
@@ -1701,16 +1756,37 @@ pub fn keyCallback(
         // Update our modifiers, this will update mouse mods too
         self.modsChanged(event.mods);
 
-        // Refresh our link state
-        const pos = self.rt_surface.getCursorPos() catch break :mouse_mods;
-        self.mouseRefreshLinks(
-            pos,
-            self.posToViewport(pos.x, pos.y),
-            self.mouse.over_link,
-        ) catch |err| {
-            log.warn("failed to refresh links err={}", .{err});
-            break :mouse_mods;
-        };
+        // We only refresh links if
+        // 1. mouse reporting is off
+        // OR
+        // 2. mouse reporting is on and we are not reporting shift to the terminal
+        if (self.io.terminal.flags.mouse_event == .none or
+            (self.mouse.mods.shift and !self.mouseShiftCapture(false)))
+        {
+            // Refresh our link state
+            const pos = self.rt_surface.getCursorPos() catch break :mouse_mods;
+            self.mouseRefreshLinks(
+                pos,
+                self.posToViewport(pos.x, pos.y),
+                self.mouse.over_link,
+            ) catch |err| {
+                log.warn("failed to refresh links err={}", .{err});
+                break :mouse_mods;
+            };
+        } else if (self.io.terminal.flags.mouse_event != .none and !self.mouse.mods.shift) {
+            // If we have mouse reports on and we don't have shift pressed, we reset state
+            _ = try self.rt_app.performAction(
+                .{ .surface = self },
+                .mouse_shape,
+                self.io.terminal.mouse_shape,
+            );
+            _ = try self.rt_app.performAction(
+                .{ .surface = self },
+                .mouse_over_link,
+                .{ .url = "" },
+            );
+            try self.queueRender();
+        }
     }
 
     // Process the cursor state logic. This will update the cursor shape if
@@ -1722,7 +1798,7 @@ pub fn keyCallback(
         .mods = self.mouse.mods,
         .over_link = self.mouse.over_link,
         .hidden = self.mouse.hidden,
-    }).keyToMouseShape()) |shape| try self.rt_app.performAction(
+    }).keyToMouseShape()) |shape| _ = try self.rt_app.performAction(
         .{ .surface = self },
         .mouse_shape,
         shape,
@@ -1826,9 +1902,6 @@ fn maybeHandleBinding(
         if (self.keyboard.bindings != null and
             !event.key.modifier())
         {
-            // Reset to the root set
-            self.keyboard.bindings = null;
-
             // Encode everything up to this point
             self.endKeySequence(.flush, .retain);
         }
@@ -1850,7 +1923,7 @@ fn maybeHandleBinding(
             }
 
             // Start or continue our key sequence
-            self.rt_app.performAction(
+            _ = self.rt_app.performAction(
                 .{ .surface = self },
                 .key_sequence,
                 .{ .trigger = entry.key_ptr.* },
@@ -1914,10 +1987,21 @@ fn maybeHandleBinding(
         return .closed;
     }
 
+    // If we have the performable flag and the action was not performed,
+    // then we act as though a binding didn't exist.
+    if (leaf.flags.performable and !performed) {
+        // If we're in a sequence, we treat this as if we pressed a key
+        // that doesn't exist in the sequence. Reset our sequence and flush
+        // any queued events.
+        self.endKeySequence(.flush, .retain);
+
+        return null;
+    }
+
     // If we consume this event, then we are done. If we don't consume
     // it, we processed the action but we still want to process our
     // encodings, too.
-    if (performed and consumed) {
+    if (consumed) {
         // If we had queued events, we deinit them since we consumed
         self.endKeySequence(.drop, .retain);
 
@@ -1948,7 +2032,7 @@ fn endKeySequence(
     mem: KeySequenceMemory,
 ) void {
     // Notify apprt key sequence ended
-    self.rt_app.performAction(
+    _ = self.rt_app.performAction(
         .{ .surface = self },
         .key_sequence,
         .end,
@@ -1958,6 +2042,10 @@ fn endKeySequence(
             .{err},
         );
     };
+
+    // No matter what we clear our current binding set. This restores
+    // the set we look at to the root set.
+    self.keyboard.bindings = null;
 
     if (self.keyboard.queued.items.len > 0) {
         switch (action) {
@@ -3186,7 +3274,7 @@ fn processLinks(self: *Surface, pos: apprt.CursorPos) !bool {
                 .trim = false,
             });
             defer self.alloc.free(str);
-            try internal_os.open(self.alloc, str);
+            try internal_os.open(self.alloc, .unknown, str);
         },
 
         ._open_osc8 => {
@@ -3194,7 +3282,7 @@ fn processLinks(self: *Surface, pos: apprt.CursorPos) !bool {
                 log.warn("failed to get URI for OSC8 hyperlink", .{});
                 return false;
             };
-            try internal_os.open(self.alloc, uri);
+            try internal_os.open(self.alloc, .unknown, uri);
         },
     }
 
@@ -3280,12 +3368,12 @@ pub fn cursorPosCallback(
         self.mouse.link_point = null;
         if (self.mouse.over_link) {
             self.mouse.over_link = false;
-            try self.rt_app.performAction(
+            _ = try self.rt_app.performAction(
                 .{ .surface = self },
                 .mouse_shape,
                 self.io.terminal.mouse_shape,
             );
-            try self.rt_app.performAction(
+            _ = try self.rt_app.performAction(
                 .{ .surface = self },
                 .mouse_over_link,
                 .{ .url = "" },
@@ -3341,6 +3429,27 @@ pub fn cursorPosCallback(
         try self.queueRender();
     }
 
+    // Handle link hovering
+    // We refresh links when
+    // 1. we were previously over a link
+    // OR
+    // 2. the cursor position has changed (either we have no previous state, or the state has
+    //    changed)
+    // AND
+    // 1. mouse reporting is off
+    // OR
+    // 2. mouse reporting is on and we are not reporting shift to the terminal
+    if ((over_link or
+        self.mouse.link_point == null or
+        (self.mouse.link_point != null and !self.mouse.link_point.?.eql(pos_vp))) and
+        (self.io.terminal.flags.mouse_event == .none or
+        (self.mouse.mods.shift and !self.mouseShiftCapture(false))))
+    {
+        // If we were previously over a link, we always update. We do this so that if the text
+        // changed underneath us, even if the mouse didn't move, we update the URL hints and state
+        try self.mouseRefreshLinks(pos, pos_vp, over_link);
+    }
+
     // Do a mouse report
     if (self.io.terminal.flags.mouse_event != .none) report: {
         // Shift overrides mouse "grabbing" in the window, taken from Kitty.
@@ -3360,18 +3469,6 @@ pub fn cursorPosCallback(
         } else null;
 
         try self.mouseReport(button, .motion, self.mouse.mods, pos);
-
-        // If we were previously over a link, we need to undo the link state.
-        // We also queue a render so the renderer can undo the rendered link
-        // state.
-        if (over_link) {
-            try self.rt_app.performAction(
-                .{ .surface = self },
-                .mouse_over_link,
-                .{ .url = "" },
-            );
-            try self.queueRender();
-        }
 
         // If we're doing mouse motion tracking, we do not support text
         // selection.
@@ -3428,30 +3525,6 @@ pub fn cursorPosCallback(
 
         return;
     }
-
-    // Handle link hovering
-    if (self.mouse.link_point) |last_vp| {
-        // Mark the link's row as dirty.
-        if (over_link) {
-            self.renderer_state.terminal.screen.dirty.hyperlink_hover = true;
-        }
-
-        // If our last link viewport point is unchanged, then don't process
-        // links. This avoids constantly reprocessing regular expressions
-        // for every pixel change.
-        if (last_vp.eql(pos_vp)) {
-            // We have to restore old values that are always cleared
-            if (over_link) {
-                self.mouse.over_link = over_link;
-                self.renderer_state.mouse.point = pos_vp;
-            }
-
-            return;
-        }
-    }
-
-    // We can process new links.
-    try self.mouseRefreshLinks(pos, pos_vp, over_link);
 }
 
 /// Double-click dragging moves the selection one "word" at a time.
@@ -3502,22 +3575,21 @@ fn dragLeftClickTriple(
     const screen = &self.io.terminal.screen;
     const click_pin = self.mouse.left_click_pin.?.*;
 
-    // Get the word under our current point. If there isn't a word, do nothing.
-    const word = screen.selectLine(.{ .pin = drag_pin }) orelse return;
+    // Get the line selection under our current drag point. If there isn't a
+    // line, do nothing.
+    const line = screen.selectLine(.{ .pin = drag_pin }) orelse return;
 
-    // Get our selection to grow it. If we don't have a selection, start it now.
-    // We may not have a selection if we started our dbl-click in an area
-    // that had no data, then we dragged our mouse into an area with data.
-    var sel = screen.selectLine(.{ .pin = click_pin }) orelse {
-        try self.setSelection(word);
-        return;
-    };
+    // Get the selection under our click point. We first try to trim
+    // whitespace if we've selected a word. But if no word exists then
+    // we select the blank line.
+    const sel_ = screen.selectLine(.{ .pin = click_pin }) orelse
+        screen.selectLine(.{ .pin = click_pin, .whitespace = null });
 
-    // Grow our selection
+    var sel = sel_ orelse return;
     if (drag_pin.before(click_pin)) {
-        sel.startPtr().* = word.start();
+        sel.startPtr().* = line.start();
     } else {
-        sel.endPtr().* = word.end();
+        sel.endPtr().* = line.end();
     }
     try self.setSelection(sel);
 }
@@ -3727,7 +3799,7 @@ fn scrollToBottom(self: *Surface) !void {
 fn hideMouse(self: *Surface) void {
     if (self.mouse.hidden) return;
     self.mouse.hidden = true;
-    self.rt_app.performAction(
+    _ = self.rt_app.performAction(
         .{ .surface = self },
         .mouse_visibility,
         .hidden,
@@ -3739,7 +3811,7 @@ fn hideMouse(self: *Surface) void {
 fn showMouse(self: *Surface) void {
     if (!self.mouse.hidden) return;
     self.mouse.hidden = false;
-    self.rt_app.performAction(
+    _ = self.rt_app.performAction(
         .{ .surface = self },
         .mouse_visibility,
         .visible,
@@ -3877,7 +3949,38 @@ pub fn performBindingAction(self: *Surface, action: input.Binding.Action) !bool 
                     log.err("error setting clipboard string err={}", .{err});
                     return true;
                 };
+
+                return true;
             }
+
+            return false;
+        },
+
+        .copy_url_to_clipboard => {
+            // If the mouse isn't over a link, nothing we can do.
+            if (!self.mouse.over_link) return false;
+
+            const pos = try self.rt_surface.getCursorPos();
+            if (try self.linkAtPos(pos)) |link_info| {
+                // Get the URL text from selection
+                const url_text = (self.io.terminal.screen.selectionString(self.alloc, .{
+                    .sel = link_info[1],
+                    .trim = self.config.clipboard_trim_trailing_spaces,
+                })) catch |err| {
+                    log.err("error reading url string err={}", .{err});
+                    return false;
+                };
+                defer self.alloc.free(url_text);
+
+                self.rt_surface.setClipboardString(url_text, .standard, false) catch |err| {
+                    log.err("error copying url to clipboard err={}", .{err});
+                    return true;
+                };
+
+                return true;
+            }
+
+            return false;
         },
 
         .paste_from_clipboard => try self.startClipboardRequest(
@@ -3999,9 +4102,15 @@ pub fn performBindingAction(self: *Surface, action: input.Binding.Action) !bool 
             v,
         ),
 
-        .new_tab => try self.rt_app.performAction(
+        .new_tab => return try self.rt_app.performAction(
             .{ .surface = self },
             .new_tab,
+            {},
+        ),
+
+        .close_tab => return try self.rt_app.performAction(
+            .{ .surface = self },
+            .close_tab,
             {},
         ),
 
@@ -4009,7 +4118,7 @@ pub fn performBindingAction(self: *Surface, action: input.Binding.Action) !bool 
         .next_tab,
         .last_tab,
         .goto_tab,
-        => |v, tag| try self.rt_app.performAction(
+        => |v, tag| return try self.rt_app.performAction(
             .{ .surface = self },
             .goto_tab,
             switch (tag) {
@@ -4021,13 +4130,13 @@ pub fn performBindingAction(self: *Surface, action: input.Binding.Action) !bool 
             },
         ),
 
-        .move_tab => |position| try self.rt_app.performAction(
+        .move_tab => |position| return try self.rt_app.performAction(
             .{ .surface = self },
             .move_tab,
             .{ .amount = position },
         ),
 
-        .new_split => |direction| try self.rt_app.performAction(
+        .new_split => |direction| return try self.rt_app.performAction(
             .{ .surface = self },
             .new_split,
             switch (direction) {
@@ -4042,7 +4151,7 @@ pub fn performBindingAction(self: *Surface, action: input.Binding.Action) !bool 
             },
         ),
 
-        .goto_split => |direction| try self.rt_app.performAction(
+        .goto_split => |direction| return try self.rt_app.performAction(
             .{ .surface = self },
             .goto_split,
             switch (direction) {
@@ -4053,7 +4162,7 @@ pub fn performBindingAction(self: *Surface, action: input.Binding.Action) !bool 
             },
         ),
 
-        .resize_split => |value| try self.rt_app.performAction(
+        .resize_split => |value| return try self.rt_app.performAction(
             .{ .surface = self },
             .resize_split,
             .{
@@ -4067,19 +4176,25 @@ pub fn performBindingAction(self: *Surface, action: input.Binding.Action) !bool 
             },
         ),
 
-        .equalize_splits => try self.rt_app.performAction(
+        .equalize_splits => return try self.rt_app.performAction(
             .{ .surface = self },
             .equalize_splits,
             {},
         ),
 
-        .toggle_split_zoom => try self.rt_app.performAction(
+        .toggle_split_zoom => return try self.rt_app.performAction(
             .{ .surface = self },
             .toggle_split_zoom,
             {},
         ),
 
-        .toggle_fullscreen => try self.rt_app.performAction(
+        .toggle_maximize => return try self.rt_app.performAction(
+            .{ .surface = self },
+            .toggle_maximize,
+            {},
+        ),
+
+        .toggle_fullscreen => return try self.rt_app.performAction(
             .{ .surface = self },
             .toggle_fullscreen,
             switch (self.config.macos_non_native_fullscreen) {
@@ -4089,19 +4204,19 @@ pub fn performBindingAction(self: *Surface, action: input.Binding.Action) !bool 
             },
         ),
 
-        .toggle_window_decorations => try self.rt_app.performAction(
+        .toggle_window_decorations => return try self.rt_app.performAction(
             .{ .surface = self },
             .toggle_window_decorations,
             {},
         ),
 
-        .toggle_tab_overview => try self.rt_app.performAction(
+        .toggle_tab_overview => return try self.rt_app.performAction(
             .{ .surface = self },
             .toggle_tab_overview,
             {},
         ),
 
-        .toggle_secure_input => try self.rt_app.performAction(
+        .toggle_secure_input => return try self.rt_app.performAction(
             .{ .surface = self },
             .secure_input,
             .toggle,
@@ -4115,7 +4230,7 @@ pub fn performBindingAction(self: *Surface, action: input.Binding.Action) !bool 
             }
         },
 
-        .inspector => |mode| try self.rt_app.performAction(
+        .inspector => |mode| return try self.rt_app.performAction(
             .{ .surface = self },
             .inspector,
             switch (mode) {
@@ -4204,6 +4319,7 @@ fn closingAction(action: input.Binding.Action) bool {
     return switch (action) {
         .close_surface,
         .close_window,
+        .close_tab,
         => true,
 
         else => false,
@@ -4230,7 +4346,13 @@ fn writeScreenFile(
     const filename = try std.fmt.bufPrint(&filename_buf, "{s}.txt", .{@tagName(loc)});
 
     // Open our scrollback file
-    var file = try tmp_dir.dir.createFile(filename, .{});
+    var file = try tmp_dir.dir.createFile(
+        filename,
+        switch (builtin.os.tag) {
+            .windows => .{},
+            else => .{ .mode = 0o600 },
+        },
+    );
     defer file.close();
 
     // Screen.dumpString writes byte-by-byte, so buffer it
@@ -4278,11 +4400,16 @@ fn writeScreenFile(
             tmp_dir.deinit();
             return;
         };
+
+        // Use topLeft and bottomRight to ensure correct coordinate ordering
+        const tl = sel.topLeft(&self.io.terminal.screen);
+        const br = sel.bottomRight(&self.io.terminal.screen);
+
         try self.io.terminal.screen.dumpString(
             buf_writer.writer(),
             .{
-                .tl = sel.start(),
-                .br = sel.end(),
+                .tl = tl,
+                .br = br,
                 .unwrap = true,
             },
         );
@@ -4294,7 +4421,7 @@ fn writeScreenFile(
     const path = try tmp_dir.dir.realpath(filename, &path_buf);
 
     switch (write_action) {
-        .open => try internal_os.open(self.alloc, path),
+        .open => try internal_os.open(self.alloc, .text, path),
         .paste => self.io.queueMessage(try termio.Message.writeReq(
             self.alloc,
             path,
@@ -4550,7 +4677,7 @@ fn showDesktopNotification(self: *Surface, title: [:0]const u8, body: [:0]const 
 
     self.app.last_notification_time = now;
     self.app.last_notification_digest = new_digest;
-    try self.rt_app.performAction(
+    _ = try self.rt_app.performAction(
         .{ .surface = self },
         .desktop_notification,
         .{
@@ -4570,7 +4697,7 @@ fn crashThreadState(self: *Surface) crash.sentry.ThreadState {
 /// Tell the surface to present itself to the user. This may involve raising the
 /// window and switching tabs.
 fn presentSurface(self: *Surface) !void {
-    try self.rt_app.performAction(
+    _ = try self.rt_app.performAction(
         .{ .surface = self },
         .present_terminal,
         {},
