@@ -1,9 +1,4 @@
-ghostty (1.1.3-1~1.gbp3f47d7) UNRELEASED; urgency=medium
-
-  ** SNAPSHOT build @3f47d703b665a43dbf960a2ebcbc43fcd86610bc **
-
-  [ Clay Risser ]
-  * 
+ghostty (1.1.3-1) unstable; urgency=medium
 
   [ DeftDawg ]
   * - Add alt keybindings for ctrl+ins = Copy and shift+ins = Paste for non-MacOS systems
@@ -1422,6 +1417,10 @@ ghostty (1.1.3-1~1.gbp3f47d7) UNRELEASED; urgency=medium
   * PACKAGING.md: remove the note about 1.1.0/1.1.1/1.1.2
 
   [ Clay Risser ]
-  * Update version to 1.1.3-1~1.gbpf674ab in changelog; add various enhancements and fixes including improved keybindings, documentation updates, and macOS compatibility improvements.
+  * Fixed missing build dep
+  * Added prebuilt
+  * Fixed debian prebuilt
+  * Added build depends
+  * Released bookworm
 
- -- Clay Risser <clay@clayrisser.com>  Sat, 05 Jul 2025 07:44:06 -0500
+ -- Clay Risser <clay@clayrisser.com>  Sat, 05 Jul 2025 18:00:36 -0500

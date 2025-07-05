@@ -13,8 +13,8 @@ override_dh_install:
 		mv debian/tmp/usr/bin debian/ghostty/usr/ && \
 		mv debian/tmp/usr/share debian/ghostty/usr/ ; \
 	fi
-	if [ -f debian/prebuilt/ghostty-dev-$(shell dpkg-architecture -qDEB_HOST_ARCH).deb ]; then \
-		dpkg-deb -x debian/prebuilt/ghostty-dev-$(shell dpkg-architecture -qDEB_HOST_ARCH).deb debian/tmp && \
+	if [ -f debian/prebuilt/libghostty-dev-$(shell dpkg-architecture -qDEB_HOST_ARCH).deb ]; then \
+		dpkg-deb -x debian/prebuilt/libghostty-dev-$(shell dpkg-architecture -qDEB_HOST_ARCH).deb debian/tmp && \
 		test -d debian/tmp/usr/include && \
 		mkdir -p debian/libghostty-dev/usr && \
 		mv debian/tmp/usr/include debian/libghostty-dev/usr/ ; \
