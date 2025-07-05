@@ -11,9 +11,9 @@ override_dh_auto_clean:
 
 override_dh_auto_build:
 	cd debian && tar -xzvf zig-deps.tar.gz
-	zig build --offline -Doptimize=ReleaseFast
+	zig build -Doptimize=ReleaseFast
 
 override_dh_auto_install:
-	zig build --offline -p debian/tmp/usr -Doptimize=ReleaseFast
+	zig build -p debian/tmp/usr -Doptimize=ReleaseFast
 	install -d debian/tmp/usr/include
 	cp -r include/* debian/tmp/usr/include/
