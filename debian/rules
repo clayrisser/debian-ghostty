@@ -1,0 +1,19 @@
+#!/usr/bin/make -f
+
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+export ZIG_GLOBAL_CACHE_DIR = $(CURDIR)/debian/zig-cache
+
+%:
+	dh $@
+
+override_dh_auto_clean:
+	rm -rf .zig-cache zig-out debian/zig-cache
+
+override_dh_auto_build:
+	cd debian && tar -xzvf zig-deps.tar.gz
+	zig build --offline -Doptimize=ReleaseFast
+
+override_dh_auto_install:
+	zig build --offline -p debian/tmp/usr -Doptimize=ReleaseFast
+	install -d debian/tmp/usr/include
+	cp -r include/* debian/tmp/usr/include/
