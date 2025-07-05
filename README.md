@@ -1,13 +1,14 @@
 <!-- LOGO -->
 <h1>
-<p align="center">
-  <a href="https://ghostty.org/"><img src="https://github.com/user-attachments/assets/fe853809-ba8b-400b-83ab-a9a0da25be8a" alt="Ghostty Logo" width="128" style="margin-right: 20px"></a>
-  <a href="https://www.debian.org/"><img src="https://www.debian.org/logos/openlogo-nd.svg" alt="Debian Logo" width="104" style="margin-left: 20px"></a>
-  <br>Ghostty for Debian
-</h1>
   <p align="center">
-    👻 Ghostty is a fast, feature-rich, and cross-platform terminal emulator that uses platform-native UI and GPU acceleration.
+    <a href="https://ghostty.org/"><img src="https://github.com/user-attachments/assets/fe853809-ba8b-400b-83ab-a9a0da25be8a" alt="Ghostty Logo" width="128" style="margin-right: 20px"></a>
+    <a href="https://www.debian.org/"><img src="https://www.debian.org/logos/openlogo-nd.svg" alt="Debian Logo" width="104" style="margin-left: 20px"></a>
+    <br>Ghostty for Debian
+    <br><i>& Ubuntu</i>
   </p>
+</h1>
+<p align="center">
+  👻 Ghostty is a fast, feature-rich, and cross-platform terminal emulator that uses platform-native UI and GPU acceleration.
 </p>
 
 <p align="center">
@@ -16,19 +17,14 @@
 
 # About
 
-This repository contains Debian packaging for Ghostty, providing easy installation on Debian-based systems.
-
-## Direct Downloads
-
-- Debian 12 (Bookworm): [ghostty_1.0.0-1~13.gbp9c580a_amd64.deb](https://download.opensuse.org/repositories/home:/clayrisser:/bookworm/Debian_12/amd64/ghostty_1.0.0-1~13.gbp9c580a_amd64.deb)
-- Debian 11 (Bullseye): [ghostty_1.0.0-1~13.gbp9c580a_amd64.deb](https://download.opensuse.org/repositories/home:/clayrisser:/bullseye/Debian_11/amd64/ghostty_1.0.0-1~13.gbp9c580a_amd64.deb)
-- Debian Sid (Unstable): [ghostty_1.0.0-1~13.gbp9c580a_amd64.deb](https://download.opensuse.org/repositories/home:/clayrisser:/sid/Debian_Unstable/amd64/ghostty_1.0.0-1~13.gbp9c580a_amd64.deb)
+This repository contains Debian packaging for Ghostty.
 
 ## Installation
 
-### Debian 12 (Bookworm)
+### Debian 12 (Bookworm) / *Ubuntu 22.04 LTS (Jammy)*
 
-#### Option 1: Add Repository
+**repository installation**
+
 ```sh
 echo 'deb http://download.opensuse.org/repositories/home:/clayrisser:/bookworm/Debian_12/ /' | sudo tee /etc/apt/sources.list.d/home:clayrisser:bookworm.list
 curl -fsSL https://download.opensuse.org/repositories/home:clayrisser:bookworm/Debian_12/Release.key | gpg --dearmor | sudo tee /etc/apt/trusted.gpg.d/home_clayrisser_bookworm.gpg > /dev/null
@@ -36,33 +32,18 @@ sudo apt update
 sudo apt install ghostty
 ```
 
-#### Option 2: Direct Download
-Download and install the .deb package directly:
+**direct installation**
+
 ```sh
-curl -LO https://download.opensuse.org/repositories/home:/clayrisser:/bookworm/Debian_12/amd64/ghostty_1.0.0-1~13.gbp9c580a_amd64.deb
-sudo apt install ./ghostty_1.0.0-1~13.gbp9c580a_amd64.deb
+ARCH="$(dpkg --print-architecture)"
+curl -LO https://download.opensuse.org/repositories/home:/clayrisser:/bookworm/Debian_12/$ARCH/ghostty_1.1.3-1_$ARCH.deb
+sudo apt install ./ghostty_1.1.3-1_$ARCH.deb
 ```
 
-### Debian 11 (Bullseye)
+### Debian 13 (Trixie), Debian Sid (Unstable) / *Ubuntu 24.04 LTS (Noble)*
 
-#### Option 1: Add Repository
-```sh
-echo 'deb http://download.opensuse.org/repositories/home:/clayrisser:/bullseye/Debian_11/ /' | sudo tee /etc/apt/sources.list.d/home:clayrisser:bullseye.list
-curl -fsSL https://download.opensuse.org/repositories/home:clayrisser:bullseye/Debian_11/Release.key | gpg --dearmor | sudo tee /etc/apt/trusted.gpg.d/home_clayrisser_bullseye.gpg > /dev/null
-sudo apt update
-sudo apt install ghostty
-```
+**repository installation**
 
-#### Option 2: Direct Download
-Download and install the .deb package directly:
-```sh
-curl -LO https://download.opensuse.org/repositories/home:/clayrisser:/bullseye/Debian_11/amd64/ghostty_1.0.0-1~13.gbp9c580a_amd64.deb
-sudo apt install ./ghostty_1.0.0-1~13.gbp9c580a_amd64.deb
-```
-
-### Debian Sid (Unstable)
-
-#### Option 1: Add Repository
 ```sh
 echo 'deb http://download.opensuse.org/repositories/home:/clayrisser:/sid/Debian_Unstable/ /' | sudo tee /etc/apt/sources.list.d/home:clayrisser:sid.list
 curl -fsSL https://download.opensuse.org/repositories/home:clayrisser:sid/Debian_Unstable/Release.key | gpg --dearmor | sudo tee /etc/apt/trusted.gpg.d/home_clayrisser_sid.gpg > /dev/null
@@ -70,20 +51,21 @@ sudo apt update
 sudo apt install ghostty
 ```
 
-#### Option 2: Direct Download
-Download and install the .deb package directly:
+**direct installation**
+
 ```sh
-curl -LO https://download.opensuse.org/repositories/home:/clayrisser:/sid/Debian_Unstable/amd64/ghostty_1.0.0-1~13.gbp9c580a_amd64.deb
-sudo apt install ./ghostty_1.0.0-1~13.gbp9c580a_amd64.deb
+ARCH="$(dpkg --print-architecture)"
+curl -LO https://download.opensuse.org/repositories/home:/clayrisser:/sid/Debian_Unstable/$ARCH/ghostty_1.1.3-2_$ARCH.deb
+sudo apt install ./ghostty_1.1.3-2_$ARCH.deb
 ```
 
-## Development
+## Downloads
 
-The packages are built using the [Open Build Service](https://build.opensuse.org/). You can find the project repositories here:
+- Debian 12 (Bookworm): [ghostty_1.1.3-1_amd64.deb](https://download.opensuse.org/repositories/home:/clayrisser:/bookworm/Debian_12/amd64/ghostty_1.1.3-1_amd64.deb)
+- Debian Sid (Unstable): [ghostty_1.1.3-2_amd64.deb](https://download.opensuse.org/repositories/home:/clayrisser:/sid/Debian_Unstable/amd64/ghostty_1.1.3-2_amd64.deb), [ghostty_1.1.3-2_arm64.deb](https://download.opensuse.org/repositories/home:/clayrisser:/sid/Debian_Unstable/arm64/ghostty_1.1.3-2_arm64.deb)
+
+## Builds
+
+The packages are built using the [Open Build Service](https://build.opensuse.org/).
 - [Bookworm](https://build.opensuse.org/project/show/home:clayrisser:bookworm)
-- [Bullseye](https://build.opensuse.org/project/show/home:clayrisser:bullseye)
 - [Sid](https://build.opensuse.org/project/show/home:clayrisser:sid)
-
-## License
-
-This packaging is licensed under the Apache License 2.0.
