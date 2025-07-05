@@ -18,7 +18,8 @@
 <h4 align="center">
     <p>
       <a href="https://github.com/clayrisser/debian-zig">
-        <img src="https://avatars.githubusercontent.com/u/27973237?s=200&v=4" alt="Zig Logo" width="48" style="margin-right: 12px"><img src="https://www.debian.org/logos/openlogo-nd.svg" alt="Debian Logo" width="39" style="margin-left: 12px">
+        <img src="https://avatars.githubusercontent.com/u/27973237?s=200&v=4" alt="Zig Logo" width="48" style="margin-right: 12px">
+        <img src="https://www.debian.org/logos/openlogo-nd.svg" alt="Debian Logo" width="39" style="margin-left: 12px">
         <br>Zig for Debian
       </a>
     </p>
