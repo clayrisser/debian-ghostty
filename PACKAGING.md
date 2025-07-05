@@ -19,8 +19,8 @@ at `release.files.ghostty.org` in the following URL format where
 `VERSION` is the version number with no prefix such as `1.0.0`:
 
 ```
-https://release.files.ghostty.org/VERSION/ghostty-source.tar.gz
-https://release.files.ghostty.org/VERSION/ghostty-source.tar.gz.minisig
+https://release.files.ghostty.org/VERSION/ghostty-VERSION.tar.gz
+https://release.files.ghostty.org/VERSION/ghostty-VERSION.tar.gz.minisig
 ```
 
 Signature files are signed with
@@ -110,3 +110,11 @@ relevant to package maintainers:
   often necessary for system packages to specify a specific minimum Linux
   version, glibc, etc. Run `zig targets` to a get a full list of available
   targets.
+
+> [!WARNING]
+>
+> **The GLFW runtime is not meant for distribution.** The GLFW runtime
+> (`-Dapp-runtime=glfw`) is meant for development and testing only. It is
+> missing many features, has known memory leak scenarios, known crashes,
+> and more. Please do not package the GLFW-based Ghostty runtime for
+> distribution.

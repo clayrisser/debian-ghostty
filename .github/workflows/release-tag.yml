@@ -7,6 +7,7 @@ on:
       upload:
         description: "Upload final artifacts to R2"
         default: false
+
   push:
     tags:
       - "v[0-9]+.[0-9]+.[0-9]+"
@@ -74,6 +75,8 @@ jobs:
   source-tarball:
     runs-on: namespace-profile-ghostty-md
     needs: [setup]
+    env:
+      GHOSTTY_VERSION: ${{ needs.setup.outputs.version }}
     steps:
       - uses: actions/checkout@v4
 
@@ -87,19 +90,24 @@ jobs:
           authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
 
       - name: Create Tarball
-        run: git archive --format=tgz --prefix=ghostty-source/ -o ghostty-source.tar.gz HEAD
+        run: |
+          git archive --format=tgz --prefix="ghostty-${GHOSTTY_VERSION}/" -o "ghostty-${GHOSTTY_VERSION}.tar.gz" HEAD
+          git archive --format=tgz --prefix=ghostty-source/ -o ghostty-source.tar.gz HEAD
 
       - name: Sign Tarball
         run: |
           echo -n "${{ secrets.MINISIGN_KEY }}" > minisign.key
           echo -n "${{ secrets.MINISIGN_PASSWORD }}" > minisign.password
-          nix develop -c minisign -S -m ghostty-source.tar.gz -s minisign.key < minisign.password
+          nix develop -c minisign -S -m "ghostty-${GHOSTTY_VERSION}.tar.gz" -s minisign.key < minisign.password
+          nix develop -c minisign -S -m "ghostty-source.tar.gz" -s minisign.key < minisign.password
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: source-tarball
           path: |-
+            ghostty-${{ env.GHOSTTY_VERSION }}.tar.gz
+            ghostty-${{ env.GHOSTTY_VERSION }}.tar.gz.minisig
             ghostty-source.tar.gz
             ghostty-source.tar.gz.minisig
 
@@ -128,7 +136,7 @@ jobs:
 
       - name: Setup Sparkle
         env:
-          SPARKLE_VERSION: 2.6.3
+          SPARKLE_VERSION: 2.6.4
         run: |
           mkdir -p .action/sparkle
           cd .action/sparkle
@@ -165,6 +173,7 @@ jobs:
 
           # Updater
           /usr/libexec/PlistBuddy -c "Set :SUPublicEDKey $SPARKLE_KEY_PUB" "macos/build/Release/Ghostty.app/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Delete :SUEnableAutomaticChecks" "macos/build/Release/Ghostty.app/Contents/Info.plist"
 
       - name: Codesign app bundle
         env:
@@ -289,7 +298,7 @@ jobs:
 
       - name: Setup Sparkle
         env:
-          SPARKLE_VERSION: 2.6.3
+          SPARKLE_VERSION: 2.6.4
         run: |
           mkdir -p .action/sparkle
           cd .action/sparkle
@@ -352,27 +361,15 @@ jobs:
         run: |
           mkdir blob
           mkdir -p blob/${GHOSTTY_VERSION}
+          mv "ghostty-${GHOSTTY_VERSION}.tar.gz" blob/${GHOSTTY_VERSION}/ghostty-${GHOSTTY_VERSION}.tar.gz
+          mv "ghostty-${GHOSTTY_VERSION}.tar.gz.minisig" blob/${GHOSTTY_VERSION}/ghostty-${GHOSTTY_VERSION}.tar.gz.minisig
           mv ghostty-source.tar.gz blob/${GHOSTTY_VERSION}/ghostty-source.tar.gz
           mv ghostty-source.tar.gz.minisig blob/${GHOSTTY_VERSION}/ghostty-source.tar.gz.minisig
           mv ghostty-macos-universal.zip blob/${GHOSTTY_VERSION}/ghostty-macos-universal.zip
           mv ghostty-macos-universal-dsym.zip blob/${GHOSTTY_VERSION}/ghostty-macos-universal-dsym.zip
           mv Ghostty.dmg blob/${GHOSTTY_VERSION}/Ghostty.dmg
+          mv appcast.xml blob/${GHOSTTY_VERSION}/appcast-staged.xml
       - name: Upload to R2
-        uses: ryand56/r2-upload-action@latest
-        with:
-          r2-account-id: ${{ secrets.CF_R2_RELEASE_ACCOUNT_ID }}
-          r2-access-key-id: ${{ secrets.CF_R2_RELEASE_AWS_KEY }}
-          r2-secret-access-key: ${{ secrets.CF_R2_RELEASE_SECRET_KEY }}
-          r2-bucket: ghostty-release
-          source-dir: blob
-          destination-dir: ./
-
-      - name: Prep Appcast
-        run: |
-          rm -rf blob
-          mkdir blob
-          mv appcast.xml blob/appcast.xml
-      - name: Upload Appcast to R2
         uses: ryand56/r2-upload-action@latest
         with:
           r2-account-id: ${{ secrets.CF_R2_RELEASE_ACCOUNT_ID }}

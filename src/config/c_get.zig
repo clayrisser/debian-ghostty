@@ -42,6 +42,11 @@ fn getValue(ptr_raw: *anyopaque, value: anytype) bool {
             ptr.* = @intCast(value);
         },
 
+        i16 => {
+            const ptr: *c_short = @ptrCast(@alignCast(ptr_raw));
+            ptr.* = @intCast(value);
+        },
+
         f32, f64 => |Float| {
             const ptr: *Float = @ptrCast(@alignCast(ptr_raw));
             ptr.* = @floatCast(value);
@@ -77,6 +82,17 @@ fn getValue(ptr_raw: *anyopaque, value: anytype) bool {
 
                 const ptr: *c_uint = @ptrCast(@alignCast(ptr_raw));
                 ptr.* = @intCast(@as(Backing, @bitCast(value)));
+            },
+
+            .Union => |_| {
+                if (@hasDecl(T, "cval")) {
+                    const PtrT = @typeInfo(@TypeOf(T.cval)).Fn.return_type.?;
+                    const ptr: *PtrT = @ptrCast(@alignCast(ptr_raw));
+                    ptr.* = value.cval();
+                    return true;
+                }
+
+                return false;
             },
 
             else => return false,
@@ -165,5 +181,32 @@ test "c_get: optional" {
         try testing.expectEqual(255, cval.r);
         try testing.expectEqual(0, cval.g);
         try testing.expectEqual(0, cval.b);
+    }
+}
+
+test "c_get: background-blur" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+
+    var c = try Config.default(alloc);
+    defer c.deinit();
+
+    {
+        c.@"background-blur" = .false;
+        var cval: u8 = undefined;
+        try testing.expect(get(&c, .@"background-blur", @ptrCast(&cval)));
+        try testing.expectEqual(0, cval);
+    }
+    {
+        c.@"background-blur" = .true;
+        var cval: u8 = undefined;
+        try testing.expect(get(&c, .@"background-blur", @ptrCast(&cval)));
+        try testing.expectEqual(20, cval);
+    }
+    {
+        c.@"background-blur" = .{ .radius = 42 };
+        var cval: u8 = undefined;
+        try testing.expect(get(&c, .@"background-blur", @ptrCast(&cval)));
+        try testing.expectEqual(42, cval);
     }
 }

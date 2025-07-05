@@ -1,6 +1,7 @@
 const builtin = @import("builtin");
 const options = @import("main.zig").options;
 const run = @import("shaper/run.zig");
+const feature = @import("shaper/feature.zig");
 pub const noop = @import("shaper/noop.zig");
 pub const harfbuzz = @import("shaper/harfbuzz.zig");
 pub const coretext = @import("shaper/coretext.zig");
@@ -8,6 +9,9 @@ pub const web_canvas = @import("shaper/web_canvas.zig");
 pub const Cache = @import("shaper/Cache.zig");
 pub const TextRun = run.TextRun;
 pub const RunIterator = run.RunIterator;
+pub const Feature = feature.Feature;
+pub const FeatureList = feature.FeatureList;
+pub const default_features = feature.default_features;
 
 /// Shaper implementation for our compile options.
 pub const Shaper = switch (options.backend) {
@@ -49,10 +53,7 @@ pub const Cell = struct {
 
 /// Options for shapers.
 pub const Options = struct {
-    /// Font features to use when shaping. These can be in the following
-    /// formats: "-feat" "+feat" "feat". A "-"-prefix is used to disable
-    /// a feature and the others are used to enable a feature. If a feature
-    /// isn't supported or is invalid, it will be ignored.
+    /// Font features to use when shaping.
     ///
     /// Note: eventually, this will move to font.Face probably as we may
     /// want to support per-face feature configuration. For now, we only

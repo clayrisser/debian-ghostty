@@ -307,21 +307,21 @@ class NonNativeFullscreen: FullscreenBase, FullscreenStyle {
     // MARK: Dock
 
     private func hideDock() {
-        NSApp.presentationOptions.insert(.autoHideDock)
+        NSApp.acquirePresentationOption(.autoHideDock)
     }
 
     private func unhideDock() {
-        NSApp.presentationOptions.remove(.autoHideDock)
+        NSApp.releasePresentationOption(.autoHideDock)
     }
 
     // MARK: Menu
 
     func hideMenu() {
-        NSApp.presentationOptions.insert(.autoHideMenuBar)
+        NSApp.acquirePresentationOption(.autoHideMenuBar)
     }
 
     func unhideMenu() {
-        NSApp.presentationOptions.remove(.autoHideMenuBar)
+        NSApp.releasePresentationOption(.autoHideMenuBar)
     }
 
     /// The state that must be saved for non-native fullscreen to exit fullscreen.

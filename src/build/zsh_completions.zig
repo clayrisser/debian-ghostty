@@ -5,7 +5,9 @@ const Action = @import("../cli/action.zig").Action;
 
 /// A zsh completions configuration that contains all the available commands
 /// and options.
-pub const zsh_completions = comptimeGenerateZshCompletions();
+pub const completions = comptimeGenerateZshCompletions();
+
+const equals_required = "=-:::";
 
 fn comptimeGenerateZshCompletions() []const u8 {
     comptime {
@@ -47,34 +49,42 @@ fn writeZshCompletions(writer: anytype) !void {
         if (field.name[0] == '_') continue;
         try writer.writeAll("    \"--");
         try writer.writeAll(field.name);
-        try writer.writeAll("=-:::");
 
-        if (std.mem.startsWith(u8, field.name, "font-family"))
-            try writer.writeAll("_fonts")
-        else if (std.mem.eql(u8, "theme", field.name))
-            try writer.writeAll("_themes")
-        else if (std.mem.eql(u8, "working-directory", field.name))
-            try writer.writeAll("{_files -/}")
-        else if (field.type == Config.RepeatablePath)
-            try writer.writeAll("_files") // todo check if this is needed
-        else {
-            try writer.writeAll("(");
+        if (std.mem.startsWith(u8, field.name, "font-family")) {
+            try writer.writeAll(equals_required);
+            try writer.writeAll("_fonts");
+        } else if (std.mem.eql(u8, "theme", field.name)) {
+            try writer.writeAll(equals_required);
+            try writer.writeAll("_themes");
+        } else if (std.mem.eql(u8, "working-directory", field.name)) {
+            try writer.writeAll(equals_required);
+            try writer.writeAll("{_files -/}");
+        } else if (field.type == Config.RepeatablePath) {
+            try writer.writeAll(equals_required);
+            try writer.writeAll("_files"); // todo check if this is needed
+        } else {
             switch (@typeInfo(field.type)) {
-                .Bool => try writer.writeAll("true false"),
+                .Bool => {},
                 .Enum => |info| {
+                    try writer.writeAll(equals_required);
+                    try writer.writeAll("(");
                     for (info.fields, 0..) |f, i| {
                         if (i > 0) try writer.writeAll(" ");
                         try writer.writeAll(f.name);
                     }
+                    try writer.writeAll(")");
                 },
                 .Struct => |info| {
+                    try writer.writeAll(equals_required);
                     if (!@hasDecl(field.type, "parseCLI") and info.layout == .@"packed") {
+                        try writer.writeAll("(");
                         for (info.fields, 0..) |f, i| {
                             if (i > 0) try writer.writeAll(" ");
                             try writer.writeAll(f.name);
                             try writer.writeAll(" no-");
                             try writer.writeAll(f.name);
                         }
+                        try writer.writeAll(")");
                     } else {
                         //resize-overlay-duration
                         //keybind
@@ -85,12 +95,14 @@ fn writeZshCompletions(writer: anytype) !void {
                         //foreground
                         //font-variation*
                         //font-feature
-                        try writer.writeAll(" ");
+                        try writer.writeAll("( )");
                     }
                 },
-                else => try writer.writeAll(" "),
+                else => {
+                    try writer.writeAll(equals_required);
+                    try writer.writeAll("( )");
+                },
             }
-            try writer.writeAll(")");
         }
 
         try writer.writeAll("\" \\\n");
@@ -170,10 +182,11 @@ fn writeZshCompletions(writer: anytype) !void {
 
                 try writer.writeAll(padding ++ "    '--");
                 try writer.writeAll(opt.name);
-                try writer.writeAll("=-:::");
+
                 switch (@typeInfo(opt.type)) {
-                    .Bool => try writer.writeAll("(true false)"),
+                    .Bool => {},
                     .Enum => |info| {
+                        try writer.writeAll(equals_required);
                         try writer.writeAll("(");
                         for (info.fields, 0..) |f, i| {
                             if (i > 0) try writer.writeAll(" ");
@@ -182,6 +195,7 @@ fn writeZshCompletions(writer: anytype) !void {
                         try writer.writeAll(")");
                     },
                     .Optional => |optional| {
+                        try writer.writeAll(equals_required);
                         switch (@typeInfo(optional.child)) {
                             .Enum => |info| {
                                 try writer.writeAll("(");
@@ -199,11 +213,13 @@ fn writeZshCompletions(writer: anytype) !void {
                         }
                     },
                     else => {
+                        try writer.writeAll(equals_required);
                         if (std.mem.eql(u8, "config-file", opt.name)) {
                             try writer.writeAll("_files");
                         } else try writer.writeAll("( )");
                     },
                 }
+
                 try writer.writeAll("' \\\n");
             }
             try writer.writeAll(padding ++ ";;\n");

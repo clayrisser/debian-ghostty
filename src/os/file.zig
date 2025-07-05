@@ -4,24 +4,27 @@ const posix = std.posix;
 
 const log = std.log.scoped(.os);
 
+pub const rlimit = if (@hasDecl(posix.system, "rlimit")) posix.rlimit else struct {};
+
 /// This maximizes the number of file descriptors we can have open. We
 /// need to do this because each window consumes at least a handful of fds.
 /// This is extracted from the Zig compiler source code.
-pub fn fixMaxFiles() void {
-    if (!@hasDecl(posix.system, "rlimit")) return;
+pub fn fixMaxFiles() ?rlimit {
+    if (!@hasDecl(posix.system, "rlimit")) return null;
 
-    var lim = posix.getrlimit(.NOFILE) catch {
+    const old = posix.getrlimit(.NOFILE) catch {
         log.warn("failed to query file handle limit, may limit max windows", .{});
-        return; // Oh well; we tried.
+        return null; // Oh well; we tried.
     };
 
     // If we're already at the max, we're done.
-    if (lim.cur >= lim.max) {
-        log.debug("file handle limit already maximized value={}", .{lim.cur});
-        return;
+    if (old.cur >= old.max) {
+        log.debug("file handle limit already maximized value={}", .{old.cur});
+        return old;
     }
 
     // Do a binary search for the limit.
+    var lim = old;
     var min: posix.rlim_t = lim.cur;
     var max: posix.rlim_t = 1 << 20;
     // But if there's a defined upper bound, don't search, just set it.
@@ -41,6 +44,12 @@ pub fn fixMaxFiles() void {
     }
 
     log.debug("file handle limit raised value={}", .{lim.cur});
+    return old;
+}
+
+pub fn restoreMaxFiles(lim: rlimit) void {
+    if (!@hasDecl(posix.system, "rlimit")) return;
+    posix.setrlimit(.NOFILE, lim) catch {};
 }
 
 /// Return the recommended path for temporary files.

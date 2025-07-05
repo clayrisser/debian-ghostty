@@ -14,7 +14,7 @@ const Action = @import("../cli/action.zig").Action;
 /// it's part of an on going completion like --<key>=. Working around this requires looking
 /// backward in the command line args to pretend the = is an empty string
 /// see: https://www.gnu.org/software/gnuastro/manual/html_node/Bash-TAB-completion-tutorial.html
-pub const bash_completions = comptimeGenerateBashCompletions();
+pub const completions = comptimeGenerateBashCompletions();
 
 fn comptimeGenerateBashCompletions() []const u8 {
     comptime {
@@ -319,7 +319,7 @@ fn writeBashCompletions(writer: anytype) !void {
         \\            # clear out prev so we don't run any of the key specific completions
         \\            prev=""
         \\          fi
-        \\        
+        \\
         \\          case "${COMP_WORDS[1]}" in
         \\            --*) _handle_config ;;
         \\            +*) _handle_actions ;;

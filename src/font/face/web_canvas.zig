@@ -27,7 +27,7 @@ pub const Face = struct {
     presentation: font.Presentation,
 
     /// Metrics for this font face. These are useful for renderers.
-    metrics: font.face.Metrics,
+    metrics: font.Metrics,
 
     /// The canvas element that we will reuse to render glyphs
     canvas: js.Object,
@@ -273,7 +273,7 @@ pub const Face = struct {
         const underline_position = cell_height - 1;
         const underline_thickness: f32 = 1;
 
-        const result = font.face.Metrics{
+        const result = font.Metrics{
             .cell_width = @intFromFloat(cell_width),
             .cell_height = @intFromFloat(cell_height),
             .cell_baseline = @intFromFloat(cell_baseline),

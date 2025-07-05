@@ -92,7 +92,7 @@
     }
 
     if (not $sudoedit) { set args = [ TERMINFO=$E:TERMINFO $@args ] }
-    command sudo $@args
+    (external sudo) $@args
   }
 
   defer {
@@ -117,7 +117,7 @@
     set edit:before-readline = (conj $edit:before-readline $beam~)
     set edit:after-readline  = (conj $edit:after-readline {|_| block })
   }
-  if (and (not $no-sudo) (not-eq "" $E:TERMINFO) (eq file (type -t sudo))) {
+  if (and (not $no-sudo) (not-eq "" $E:TERMINFO) (has-external sudo)) {
     edit:add-var sudo~ $sudo-with-terminfo~
   }
 }

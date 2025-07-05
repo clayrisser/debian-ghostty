@@ -24,10 +24,16 @@ const oni = @import("oniguruma");
 /// handling them well requires a non-regex approach.
 pub const regex =
     "(?:" ++ url_schemes ++
-    \\)(?:[\w\-.~:/?#@!$&*+,;=%]+(?:[\(\[]\w*[\)\]])?)+(?<![,.])
+    \\)(?:
+++ ipv6_url_pattern ++
+    \\|[\w\-.~:/?#@!$&*+,;=%]+(?:[\(\[]\w*[\)\]])?)+(?<![,.])|(?:\.\.\/|\.\/*|\/)[\w\-.~:\/?#@!$&*+,;=%]+(?:\/[\w\-.~:\/?#@!$&*+,;=%]*)*
 ;
 const url_schemes =
     \\https?://|mailto:|ftp://|file:|ssh:|git://|ssh://|tel:|magnet:|ipfs://|ipns://|gemini://|gopher://|news:
+;
+
+const ipv6_url_pattern =
+    \\(?:\[[:0-9a-fA-F]+(?:[:0-9a-fA-F]*)+\](?::[0-9]+)?)
 ;
 
 test "url regex" {
@@ -165,6 +171,83 @@ test "url regex" {
         .{
             .input = "match news:comp.infosystems.www.servers.unix news links",
             .expect = "news:comp.infosystems.www.servers.unix",
+        },
+        .{
+            .input = "/Users/ghostty.user/code/example.py",
+            .expect = "/Users/ghostty.user/code/example.py",
+        },
+        .{
+            .input = "/Users/ghostty.user/code/../example.py",
+            .expect = "/Users/ghostty.user/code/../example.py",
+        },
+        .{
+            .input = "/Users/ghostty.user/code/../example.py hello world",
+            .expect = "/Users/ghostty.user/code/../example.py",
+        },
+        .{
+            .input = "../example.py",
+            .expect = "../example.py",
+        },
+        .{
+            .input = "../example.py ",
+            .expect = "../example.py",
+        },
+        .{
+            .input = "first time ../example.py contributor ",
+            .expect = "../example.py",
+        },
+        .{
+            .input = "[link](/home/user/ghostty.user/example)",
+            .expect = "/home/user/ghostty.user/example",
+        },
+        // IPv6 URL tests - Basic tests
+        .{
+            .input = "Serving HTTP on :: port 8000 (http://[::]:8000/)",
+            .expect = "http://[::]:8000/",
+        },
+        .{
+            .input = "IPv6 address https://[2001:db8::1]:8080/path",
+            .expect = "https://[2001:db8::1]:8080/path",
+        },
+        .{
+            .input = "IPv6 localhost http://[::1]:3000",
+            .expect = "http://[::1]:3000",
+        },
+        .{
+            .input = "Complex IPv6 https://[2001:db8:85a3:8d3:1319:8a2e:370:7348]:443/",
+            .expect = "https://[2001:db8:85a3:8d3:1319:8a2e:370:7348]:443/",
+        },
+        // IPv6 URL tests - URLs with paths and query parameters
+        .{
+            .input = "IPv6 with path https://[2001:db8::1]/path/to/resource",
+            .expect = "https://[2001:db8::1]/path/to/resource",
+        },
+        .{
+            .input = "IPv6 with query https://[2001:db8::1]:8080/api?param=value&other=123",
+            .expect = "https://[2001:db8::1]:8080/api?param=value&other=123",
+        },
+        // IPv6 URL tests - Compressed forms
+        .{
+            .input = "IPv6 compressed http://[2001:db8::]:80/",
+            .expect = "http://[2001:db8::]:80/",
+        },
+        .{
+            .input = "IPv6 multiple zeros http://[2001:0:0:0:0:0:0:1]",
+            .expect = "http://[2001:0:0:0:0:0:0:1]",
+        },
+        // IPv6 URL tests - Special cases
+        .{
+            .input = "IPv6 link-local https://[fe80::1234:5678:9abc]",
+            .expect = "https://[fe80::1234:5678:9abc]",
+        },
+        .{
+            .input = "IPv6 multicast http://[ff02::1]/stream",
+            .expect = "http://[ff02::1]/stream",
+        },
+        // IPv6 URL tests - Mixed scenarios
+        .{
+            .input = "IPv6 in markdown [link](http://[2001:db8::1]/docs)",
+            .expect = "http://[2001:db8::1]/docs",
         },
     };
 

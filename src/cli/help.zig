@@ -15,9 +15,11 @@ pub const Options = struct {
     }
 };
 
-/// The `help` command shows general help about Ghostty. You can also specify
-/// `--help` or `-h` along with any action such as `+list-themes` to see help
-/// for a specific action.
+/// The `help` command shows general help about Ghostty. Recognized as either
+/// `-h, `--help`, or like other actions `+help`.
+///
+/// You can also specify `--help` or `-h` along with any action such as
+/// `+list-themes` to see help for a specific action.
 pub fn run(alloc: Allocator) !u8 {
     var opts: Options = .{};
     defer opts.deinit();
@@ -63,7 +65,7 @@ pub fn run(alloc: Allocator) !u8 {
     try stdout.writeAll(
         \\
         \\Specify `+<action> --help` to see the help for a specific action,
-        \\where `<action>` is one of actions listed below.
+        \\where `<action>` is one of actions listed above.
         \\
     );
 

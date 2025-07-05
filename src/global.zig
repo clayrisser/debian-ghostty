@@ -27,6 +27,7 @@ pub const GlobalState = struct {
     alloc: std.mem.Allocator,
     action: ?cli.Action,
     logging: Logging,
+    rlimits: ResourceLimits = .{},
 
     /// The app resources directory, equivalent to zig-out/share when we build
     /// from source. This is null if we can't detect it.
@@ -56,6 +57,7 @@ pub const GlobalState = struct {
             .alloc = undefined,
             .action = null,
             .logging = .{ .stderr = {} },
+            .rlimits = .{},
             .resources_dir = null,
         };
         errdefer self.deinit();
@@ -109,6 +111,9 @@ pub const GlobalState = struct {
             }
         }
 
+        // Setup our signal handlers before logging
+        initSignals();
+
         // Output some debug information right away
         std.log.info("ghostty version={s}", .{build_config.version_string});
         std.log.info("ghostty build optimize={s}", .{build_config.mode_string});
@@ -123,11 +128,16 @@ pub const GlobalState = struct {
         std.log.info("renderer={}", .{renderer.Renderer});
         std.log.info("libxev backend={}", .{xev.backend});
 
-        // First things first, we fix our file descriptors
-        internal_os.fixMaxFiles();
+        // As early as possible, initialize our resource limits.
+        self.rlimits = ResourceLimits.init();
 
         // Initialize our crash reporting.
-        try crash.init(self.alloc);
+        crash.init(self.alloc) catch |err| {
+            std.log.warn(
+                "sentry init failed, no crash capture available err={}",
+                .{err},
+            );
+        };
 
         // const sentrylib = @import("sentry");
         // if (sentrylib.captureEvent(sentrylib.Value.initMessageEvent(
@@ -167,5 +177,45 @@ pub const GlobalState = struct {
             // the point at which it will output if there were safety violations.
             _ = value.deinit();
         }
+    }
+
+    fn initSignals() void {
+        // Only posix systems.
+        if (comptime builtin.os.tag == .windows) return;
+
+        const p = std.posix;
+
+        var sa: p.Sigaction = .{
+            .handler = .{ .handler = p.SIG.IGN },
+            .mask = p.empty_sigset,
+            .flags = 0,
+        };
+
+        // We ignore SIGPIPE because it is a common signal we may get
+        // due to how we implement termio. When a terminal is closed we
+        // often write to a broken pipe to exit the read thread. This should
+        // be fixed one day but for now this helps make this a bit more
+        // robust.
+        p.sigaction(p.SIG.PIPE, &sa, null) catch |err| {
+            std.log.warn("failed to ignore SIGPIPE err={}", .{err});
+        };
+    }
+};
+
+/// Maintains the Unix resource limits that we set for our process. This
+/// can be used to restore the limits to their original values.
+pub const ResourceLimits = struct {
+    nofile: ?internal_os.rlimit = null,
+
+    pub fn init() ResourceLimits {
+        return .{
+            // Maximize the number of file descriptors we can have open
+            // because we can consume a lot of them if we make many terminals.
+            .nofile = internal_os.fixMaxFiles(),
+        };
+    }
+
+    pub fn restore(self: *const ResourceLimits) void {
+        if (self.nofile) |lim| internal_os.restoreMaxFiles(lim);
     }
 };

@@ -35,7 +35,7 @@ pub const VTEvent = struct {
     const Kind = enum { print, execute, csi, esc, osc, dcs, apc };
     const Metadata = std.StringHashMap([:0]const u8);
 
-    /// Initiaze the event information for the given parser action.
+    /// Initialize the event information for the given parser action.
     pub fn init(
         alloc: Allocator,
         surface: *Surface,
@@ -208,6 +208,20 @@ pub const VTEvent = struct {
                     );
                 },
 
+                .Union => |info| {
+                    const Tag = info.tag_type orelse @compileError("Unions must have a tag");
+                    const tag_name = @tagName(@as(Tag, v));
+                    inline for (info.fields) |field| {
+                        if (std.mem.eql(u8, field.name, tag_name)) {
+                            if (field.type == void) {
+                                break try md.put("data", tag_name);
+                            } else {
+                                break try encodeMetadataSingle(alloc, md, tag_name, @field(v, field.name));
+                            }
+                        }
+                    }
+                },
+
                 else => {
                     @compileLog(T);
                     @compileError("unsupported type, see log");
@@ -265,7 +279,7 @@ pub const VTEvent = struct {
             ),
 
             else => switch (Value) {
-                u8 => try md.put(
+                u8, u16 => try md.put(
                     key,
                     try std.fmt.allocPrintZ(alloc, "{}", .{value}),
                 ),

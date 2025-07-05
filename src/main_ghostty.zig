@@ -49,7 +49,8 @@ pub fn main() !MainReturn {
 
             error.InvalidAction => try stderr.print(
                 "Error: unknown CLI action specified. CLI actions are specified with\n" ++
-                    "the '+' character.\n",
+                    "the '+' character.\n\n" ++
+                    "All valid CLI actions can be listed with `ghostty +help`\n",
                 .{},
             ),
 

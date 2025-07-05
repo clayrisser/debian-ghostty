@@ -13,6 +13,7 @@ pub fn genConfig(writer: anytype) !void {
         \\---
         \\title: Reference
         \\description: Reference of all Ghostty configuration options.
+        \\editOnGithubLink: https://github.com/ghostty-org/ghostty/edit/main/src/config/Config.zig
         \\---
         \\
         \\This is a reference of all Ghostty configuration options. These

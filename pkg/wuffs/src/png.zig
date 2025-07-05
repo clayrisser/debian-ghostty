@@ -2,15 +2,13 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const c = @import("c.zig").c;
 const Error = @import("error.zig").Error;
+const check = @import("error.zig").check;
+const ImageData = @import("main.zig").ImageData;
 
 const log = std.log.scoped(.wuffs_png);
 
 /// Decode a PNG image.
-pub fn decode(alloc: Allocator, data: []const u8) Error!struct {
-    width: u32,
-    height: u32,
-    data: []const u8,
-} {
+pub fn decode(alloc: Allocator, data: []const u8) Error!ImageData {
     // Work around some weirdness in WUFFS/Zig, there are some structs that
     // are defined as "extern" by the Zig compiler which means that Zig won't
     // allocate them on the stack at compile time. WUFFS has functions for
@@ -29,11 +27,7 @@ pub fn decode(alloc: Allocator, data: []const u8) Error!struct {
             c.WUFFS_VERSION,
             0,
         );
-        if (!c.wuffs_base__status__is_ok(&status)) {
-            const e = c.wuffs_base__status__message(&status);
-            log.warn("decode err={s}", .{e});
-            return error.WuffsError;
-        }
+        try check(log, &status);
     }
 
     var source_buffer: c.wuffs_base__io_buffer = .{
@@ -53,11 +47,7 @@ pub fn decode(alloc: Allocator, data: []const u8) Error!struct {
             &image_config,
             &source_buffer,
         );
-        if (!c.wuffs_base__status__is_ok(&status)) {
-            const e = c.wuffs_base__status__message(&status);
-            log.warn("decode err={s}", .{e});
-            return error.WuffsError;
-        }
+        try check(log, &status);
     }
 
     const width = c.wuffs_base__pixel_config__width(&image_config.pixcfg);
@@ -65,7 +55,7 @@ pub fn decode(alloc: Allocator, data: []const u8) Error!struct {
 
     c.wuffs_base__pixel_config__set(
         &image_config.pixcfg,
-        c.WUFFS_BASE__PIXEL_FORMAT__RGBA_PREMUL,
+        c.WUFFS_BASE__PIXEL_FORMAT__RGBA_NONPREMUL,
         c.WUFFS_BASE__PIXEL_SUBSAMPLING__NONE,
         width,
         height,
@@ -102,25 +92,7 @@ pub fn decode(alloc: Allocator, data: []const u8) Error!struct {
             &image_config.pixcfg,
             c.wuffs_base__make_slice_u8(destination.ptr, destination.len),
         );
-        if (!c.wuffs_base__status__is_ok(&status)) {
-            const e = c.wuffs_base__status__message(&status);
-            log.warn("decode err={s}", .{e});
-            return error.WuffsError;
-        }
-    }
-
-    var frame_config: c.wuffs_base__frame_config = undefined;
-    {
-        const status = c.wuffs_png__decoder__decode_frame_config(
-            decoder,
-            &frame_config,
-            &source_buffer,
-        );
-        if (!c.wuffs_base__status__is_ok(&status)) {
-            const e = c.wuffs_base__status__message(&status);
-            log.warn("decode err={s}", .{e});
-            return error.WuffsError;
-        }
+        try check(log, &status);
     }
 
     {
@@ -132,11 +104,7 @@ pub fn decode(alloc: Allocator, data: []const u8) Error!struct {
             work_slice,
             null,
         );
-        if (!c.wuffs_base__status__is_ok(&status)) {
-            const e = c.wuffs_base__status__message(&status);
-            log.warn("decode err={s}", .{e});
-            return error.WuffsError;
-        }
+        try check(log, &status);
     }
 
     return .{
@@ -144,4 +112,22 @@ pub fn decode(alloc: Allocator, data: []const u8) Error!struct {
         .height = height,
         .data = destination,
     };
+}
+
+test "png_decode_000000" {
+    const data = try decode(std.testing.allocator, @embedFile("1x1#000000.png"));
+    defer std.testing.allocator.free(data.data);
+
+    try std.testing.expectEqual(1, data.width);
+    try std.testing.expectEqual(1, data.height);
+    try std.testing.expectEqualSlices(u8, &.{ 0, 0, 0, 255 }, data.data);
+}
+
+test "png_decode_FFFFFF" {
+    const data = try decode(std.testing.allocator, @embedFile("1x1#FFFFFF.png"));
+    defer std.testing.allocator.free(data.data);
+
+    try std.testing.expectEqual(1, data.width);
+    try std.testing.expectEqual(1, data.height);
+    try std.testing.expectEqualSlices(u8, &.{ 255, 255, 255, 255 }, data.data);
 }

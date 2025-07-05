@@ -58,6 +58,15 @@ fn dir(
     opts: Options,
     internal_opts: InternalOptions,
 ) ![]u8 {
+    // If we have a cached home dir, use that.
+    if (opts.home) |home| {
+        return try std.fs.path.join(alloc, &[_][]const u8{
+            home,
+            internal_opts.default_subdir,
+            opts.subdir orelse "",
+        });
+    }
+
     // First check the env var. On Windows we have to allocate so this tracks
     // both whether we have the env var and whether we own it.
     // on Windows we treat `LOCALAPPDATA` as a fallback for `XDG_CONFIG_HOME`
@@ -91,15 +100,6 @@ fn dir(
         }
 
         return try alloc.dupe(u8, env);
-    }
-
-    // If we have a cached home dir, use that.
-    if (opts.home) |home| {
-        return try std.fs.path.join(alloc, &[_][]const u8{
-            home,
-            internal_opts.default_subdir,
-            opts.subdir orelse "",
-        });
     }
 
     // Get our home dir
@@ -140,6 +140,32 @@ test {
         const value = try config(alloc, .{});
         defer alloc.free(value);
         try testing.expect(value.len > 0);
+    }
+}
+
+test "cache directory paths" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+    const mock_home = "/Users/test";
+
+    // Test when XDG_CACHE_HOME is not set
+    {
+        // Test base path
+        {
+            const cache_path = try cache(alloc, .{ .home = mock_home });
+            defer alloc.free(cache_path);
+            try testing.expectEqualStrings("/Users/test/.cache", cache_path);
+        }
+
+        // Test with subdir
+        {
+            const cache_path = try cache(alloc, .{
+                .home = mock_home,
+                .subdir = "ghostty",
+            });
+            defer alloc.free(cache_path);
+            try testing.expectEqualStrings("/Users/test/.cache/ghostty", cache_path);
+        }
     }
 }
 

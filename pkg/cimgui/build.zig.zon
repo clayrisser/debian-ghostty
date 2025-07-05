@@ -1,10 +1,10 @@
 .{
     .name = "cimgui",
-    .version = "1.89.9",
+    .version = "1.90.6", // -docking branch
     .paths = .{""},
     .dependencies = .{
         // This should be kept in sync with the submodule in the cimgui source
-        // code to be safe that they're compatible.
+        // code in ./vendor/ to be safe that they're compatible.
         .imgui = .{
             .url = "https://github.com/ocornut/imgui/archive/e391fe2e66eb1c96b1624ae8444dc64c23146ef4.tar.gz",
             .hash = "1220bc6b9daceaf7c8c60f3c3998058045ba0c5c5f48ae255ff97776d9cd8bfc6402",

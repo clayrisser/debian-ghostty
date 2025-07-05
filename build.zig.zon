@@ -1,17 +1,25 @@
 .{
     .name = "ghostty",
-    .version = "1.0.0",
+    .version = "1.1.3",
     .paths = .{""},
     .dependencies = .{
         // Zig libs
         .libxev = .{
-            .url = "https://github.com/mitchellh/libxev/archive/db6a52bafadf00360e675fefa7926e8e6c0e9931.tar.gz",
-            .hash = "12206029de146b685739f69b10a6f08baee86b3d0a5f9a659fa2b2b66c9602078bbf",
+            .url = "https://github.com/mitchellh/libxev/archive/31eed4e337fed7b0149319e5cdbb62b848c24fbd.tar.gz",
+            .hash = "1220ebf88622c4d502dc59e71347e4d28c47e033f11b59aff774ae5787565c40999c",
         },
         .mach_glfw = .{
             .url = "https://github.com/mitchellh/mach-glfw/archive/37c2995f31abcf7e8378fba68ddcf4a3faa02de0.tar.gz",
             .hash = "12206ed982e709e565d536ce930701a8c07edfd2cfdce428683f3f2a601d37696a62",
             .lazy = true,
+        },
+        .vaxis = .{
+            .url = "https://github.com/rockorager/libvaxis/archive/6d729a2dc3b934818dffe06d2ba3ce02841ed74b.tar.gz",
+            .hash = "12200df4ebeaed45de26cb2c9f3b6f3746d8013b604e035dae658f86f586c8c91d2f",
+        },
+        .z2d = .{
+            .url = "https://github.com/vancluever/z2d/archive/4638bb02a9dc41cc2fb811f092811f6a951c752a.tar.gz",
+            .hash = "12201f0d542e7541cf492a001d4d0d0155c92f58212fbcb0d224e95edeba06b5416a",
         },
         .zig_objc = .{
             .url = "https://github.com/mitchellh/zig-objc/archive/9b8ba849b0f58fe207ecd6ab7c147af55b17556e.tar.gz",
@@ -24,6 +32,18 @@
         .ziglyph = .{
             .url = "https://deps.files.ghostty.org/ziglyph-b89d43d1e3fb01b6074bc1f7fc980324b04d26a5.tar.gz",
             .hash = "12207831bce7d4abce57b5a98e8f3635811cfefd160bca022eb91fe905d36a02cf25",
+        },
+        .zig_wayland = .{
+            .url = "https://deps.files.ghostty.org/zig-wayland-fbfe3b4ac0b472a27b1f1a67405436c58cbee12d.tar.gz",
+            .hash = "12209ca054cb1919fa276e328967f10b253f7537c4136eb48f3332b0f7cf661cad38",
+        },
+        .zf = .{
+            .url = "https://github.com/natecraddock/zf/archive/ed99ca18b02dda052e20ba467e90b623c04690dd.tar.gz",
+            .hash = "1220edc3b8d8bedbb50555947987e5e8e2f93871ca3c8e8d4cc8f1377c15b5dd35e8",
+        },
+        .gobject = .{
+            .url = "https://github.com/ianprime0509/zig-gobject/releases/download/v0.2.2/bindings-gnome47.tar.zst",
+            .hash = "12208d70ee791d7ef7e16e1c3c9c1127b57f1ed066a24f87d57fc9f730c5dc394b9d",
         },
 
         // C libs
@@ -46,23 +66,25 @@
         .glslang = .{ .path = "./pkg/glslang" },
         .spirv_cross = .{ .path = "./pkg/spirv-cross" },
 
+        // Wayland
+        .wayland = .{
+            .url = "https://deps.files.ghostty.org/wayland-9cb3d7aa9dc995ffafdbdef7ab86a949d0fb0e7d.tar.gz",
+            .hash = "12202cdac858abc52413a6c6711d5026d2d3c8e13f95ca2c327eade0736298bb021f",
+        },
+        .wayland_protocols = .{
+            .url = "https://deps.files.ghostty.org/wayland-protocols-258d8f88f2c8c25a830c6316f87d23ce1a0f12d9.tar.gz",
+            .hash = "12201a57c6ce0001aa034fa80fba3e1cd2253c560a45748f4f4dd21ff23b491cddef",
+        },
+        .plasma_wayland_protocols = .{
+            .url = "https://github.com/KDE/plasma-wayland-protocols/archive/db525e8f9da548cffa2ac77618dd0fbe7f511b86.tar.gz",
+            .hash = "12207e0851c12acdeee0991e893e0132fc87bb763969a585dc16ecca33e88334c566",
+        },
+
         // Other
         .apple_sdk = .{ .path = "./pkg/apple-sdk" },
         .iterm2_themes = .{
-            .url = "https://github.com/mbadolato/iTerm2-Color-Schemes/archive/d6c42066b3045292e0b1154ad84ff22d6863ebf7.tar.gz",
-            .hash = "12204358b2848ffd993d3425055bff0a5ba9b1b60bead763a6dea0517965d7290a6c",
-        },
-        .vaxis = .{
-            .url = "git+https://github.com/rockorager/libvaxis/?ref=main#6d729a2dc3b934818dffe06d2ba3ce02841ed74b",
-            .hash = "12200df4ebeaed45de26cb2c9f3b6f3746d8013b604e035dae658f86f586c8c91d2f",
-        },
-        .zf = .{
-            .url = "git+https://github.com/natecraddock/zf/?ref=main#ed99ca18b02dda052e20ba467e90b623c04690dd",
-            .hash = "1220edc3b8d8bedbb50555947987e5e8e2f93871ca3c8e8d4cc8f1377c15b5dd35e8",
-        },
-        .z2d = .{
-            .url = "git+https://github.com/vancluever/z2d?ref=v0.4.0#4638bb02a9dc41cc2fb811f092811f6a951c752a",
-            .hash = "12201f0d542e7541cf492a001d4d0d0155c92f58212fbcb0d224e95edeba06b5416a",
+            .url = "https://github.com/mbadolato/iTerm2-Color-Schemes/archive/db227d159adc265818f2e898da0f70ef8d7b580e.tar.gz",
+            .hash = "12203d2647e5daf36a9c85b969e03f422540786ce9ea624eb4c26d204fe1f46218f3",
         },
     },
 }

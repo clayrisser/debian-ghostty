@@ -316,7 +316,7 @@ pub fn directionMap(self: *const Split, from: Side) DirectionMap {
             // This behavior matches the behavior of macOS at the time of writing
             // this. There is an open issue (#524) to make this depend on the
             // actual physical location of the current split.
-            result.put(.top, prev.surface);
+            result.put(.up, prev.surface);
             result.put(.left, prev.surface);
         }
     }
@@ -324,7 +324,7 @@ pub fn directionMap(self: *const Split, from: Side) DirectionMap {
     if (self.directionNext(from)) |next| {
         result.put(.next, next.surface);
         if (!next.wrapped) {
-            result.put(.bottom, next.surface);
+            result.put(.down, next.surface);
             result.put(.right, next.surface);
         }
     }

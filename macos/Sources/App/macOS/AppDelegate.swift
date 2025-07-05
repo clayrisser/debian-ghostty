@@ -30,11 +30,13 @@ class AppDelegate: NSObject,
     @IBOutlet private var menuSplitRight: NSMenuItem?
     @IBOutlet private var menuSplitDown: NSMenuItem?
     @IBOutlet private var menuClose: NSMenuItem?
+    @IBOutlet private var menuCloseTab: NSMenuItem?
     @IBOutlet private var menuCloseWindow: NSMenuItem?
     @IBOutlet private var menuCloseAllWindows: NSMenuItem?
 
     @IBOutlet private var menuCopy: NSMenuItem?
     @IBOutlet private var menuPaste: NSMenuItem?
+    @IBOutlet private var menuPasteSelection: NSMenuItem?
     @IBOutlet private var menuSelectAll: NSMenuItem?
 
     @IBOutlet private var menuToggleVisibility: NSMenuItem?
@@ -90,10 +92,8 @@ class AppDelegate: NSObject,
         return ProcessInfo.processInfo.systemUptime - applicationLaunchTime
     }
 
-    /// Tracks whether the application is currently visible. This can be gamed, i.e. if a user manually
-    /// brings each window one by one to the front. But at worst its off by one set of toggles and this
-    /// makes our logic very easy.
-    private var isVisible: Bool = true
+    /// Tracks the windows that we hid for toggleVisibility.
+    private var hiddenState: ToggleVisibilityState? = nil
 
     /// The observer for the app appearance.
     private var appearanceObserver: NSKeyValueObservation? = nil
@@ -217,15 +217,20 @@ class AppDelegate: NSObject,
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
-        guard !applicationHasBecomeActive else { return }
-        applicationHasBecomeActive = true
+        // If we're back manually then clear the hidden state because macOS handles it.
+        self.hiddenState = nil
 
-        // Let's launch our first window. We only do this if we have no other windows. It
-        // is possible to have other windows in a few scenarios:
-        //   - if we're opening a URL since `application(_:openFile:)` is called before this.
-        //   - if we're restoring from persisted state
-        if terminalManager.windows.count == 0 && derivedConfig.initialWindow {
-            terminalManager.newWindow()
+        // First launch stuff
+        if (!applicationHasBecomeActive) {
+            applicationHasBecomeActive = true
+
+            // Let's launch our first window. We only do this if we have no other windows. It
+            // is possible to have other windows in a few scenarios:
+            //   - if we're opening a URL since `application(_:openFile:)` is called before this.
+            //   - if we're restoring from persisted state
+            if terminalManager.windows.count == 0 && derivedConfig.initialWindow {
+                terminalManager.newWindow()
+            }
         }
     }
 
@@ -240,7 +245,13 @@ class AppDelegate: NSObject,
         // This probably isn't fully safe. The isEmpty check above is aspirational, it doesn't
         // quite work with SwiftUI because windows are retained on close. So instead we check
         // if there are any that are visible. I'm guessing this breaks under certain scenarios.
-        if (windows.allSatisfy { !$0.isVisible }) { return .terminateNow }
+        //
+        // NOTE(mitchellh): I don't think we need this check at all anymore. I'm keeping it
+        // here because I don't want to remove it in a patch release cycle but we should
+        // target removing it soon.
+        if (self.quickController == nil && windows.allSatisfy { !$0.isVisible }) {
+            return .terminateNow
+        }
 
         // If the user is shutting down, restarting, or logging out, we don't confirm quit.
         why: if let event = NSAppleEventManager.shared().currentAppleEvent {
@@ -346,6 +357,7 @@ class AppDelegate: NSObject,
         syncMenuShortcut(config, action: "new_window", menuItem: self.menuNewWindow)
         syncMenuShortcut(config, action: "new_tab", menuItem: self.menuNewTab)
         syncMenuShortcut(config, action: "close_surface", menuItem: self.menuClose)
+        syncMenuShortcut(config, action: "close_tab", menuItem: self.menuCloseTab)
         syncMenuShortcut(config, action: "close_window", menuItem: self.menuCloseWindow)
         syncMenuShortcut(config, action: "close_all_windows", menuItem: self.menuCloseAllWindows)
         syncMenuShortcut(config, action: "new_split:right", menuItem: self.menuSplitRight)
@@ -353,13 +365,14 @@ class AppDelegate: NSObject,
 
         syncMenuShortcut(config, action: "copy_to_clipboard", menuItem: self.menuCopy)
         syncMenuShortcut(config, action: "paste_from_clipboard", menuItem: self.menuPaste)
+        syncMenuShortcut(config, action: "paste_from_selection", menuItem: self.menuPasteSelection)
         syncMenuShortcut(config, action: "select_all", menuItem: self.menuSelectAll)
 
         syncMenuShortcut(config, action: "toggle_split_zoom", menuItem: self.menuZoomSplit)
         syncMenuShortcut(config, action: "goto_split:previous", menuItem: self.menuPreviousSplit)
         syncMenuShortcut(config, action: "goto_split:next", menuItem: self.menuNextSplit)
-        syncMenuShortcut(config, action: "goto_split:top", menuItem: self.menuSelectSplitAbove)
-        syncMenuShortcut(config, action: "goto_split:bottom", menuItem: self.menuSelectSplitBelow)
+        syncMenuShortcut(config, action: "goto_split:up", menuItem: self.menuSelectSplitAbove)
+        syncMenuShortcut(config, action: "goto_split:down", menuItem: self.menuSelectSplitBelow)
         syncMenuShortcut(config, action: "goto_split:left", menuItem: self.menuSelectSplitLeft)
         syncMenuShortcut(config, action: "goto_split:right", menuItem: self.menuSelectSplitRight)
         syncMenuShortcut(config, action: "resize_split:up,10", menuItem: self.menuMoveSplitDividerUp)
@@ -425,6 +438,22 @@ class AppDelegate: NSObject,
         // because we let it capture and propagate.
         guard NSApp.mainWindow == nil else { return event }
 
+        // If this event as-is would result in a key binding then we send it.
+        if let app = ghostty.app,
+           ghostty_app_key_is_binding(
+            app,
+            event.ghosttyKeyEvent(GHOSTTY_ACTION_PRESS)) {
+            // If the key was handled by Ghostty we stop the event chain. If
+            // the key wasn't handled then we let it fall through and continue
+            // processing. This is important because some bindings may have no
+            // affect at this scope.
+            if (ghostty_app_key(
+                app,
+                event.ghosttyKeyEvent(GHOSTTY_ACTION_PRESS))) {
+                return nil
+            }
+        }
+
         // If this event would be handled by our menu then we do nothing.
         if let mainMenu = NSApp.mainMenu,
            mainMenu.performKeyEquivalent(with: event) {
@@ -438,13 +467,7 @@ class AppDelegate: NSObject,
         guard let ghostty = self.ghostty.app else { return event }
 
         // Build our event input and call ghostty
-        var key_ev = ghostty_input_key_s()
-        key_ev.action = GHOSTTY_ACTION_PRESS
-        key_ev.mods = Ghostty.ghosttyMods(event.modifierFlags)
-        key_ev.keycode = UInt32(event.keyCode)
-        key_ev.text = nil
-        key_ev.composing = false
-        if (ghostty_app_key(ghostty, key_ev)) {
+        if (ghostty_app_key(ghostty, event.ghosttyKeyEvent(GHOSTTY_ACTION_PRESS))) {
             // The key was used so we want to stop it from going to our Mac app
             Ghostty.logger.debug("local key event handled event=\(event)")
             return nil
@@ -484,11 +507,19 @@ class AppDelegate: NSObject,
         default: UserDefaults.standard.removeObject(forKey: "NSQuitAlwaysKeepsWindows")
         }
 
-        // Sync our auto-update settings
-        updaterController.updater.automaticallyChecksForUpdates =
-            config.autoUpdate == .check || config.autoUpdate == .download
-        updaterController.updater.automaticallyDownloadsUpdates =
-            config.autoUpdate == .download
+        // Sync our auto-update settings. If SUEnableAutomaticChecks (in our Info.plist) is
+        // explicitly false (NO), auto-updates are disabled. Otherwise, we use the behavior
+        // defined by our "auto-update" configuration (if set) or fall back to Sparkle
+        // user-based defaults.
+        if Bundle.main.infoDictionary?["SUEnableAutomaticChecks"] as? Bool == false {
+            updaterController.updater.automaticallyChecksForUpdates = false
+            updaterController.updater.automaticallyDownloadsUpdates = false
+        } else if let autoUpdate = config.autoUpdate {
+            updaterController.updater.automaticallyChecksForUpdates =
+                autoUpdate == .check || autoUpdate == .download
+            updaterController.updater.automaticallyDownloadsUpdates =
+                autoUpdate == .download
+        }
 
         // Config could change keybindings, so update everything that depends on that
         syncMenuShortcuts(config)
@@ -531,6 +562,30 @@ class AppDelegate: NSObject,
         case .official:
             self.appIcon = nil
             break
+
+        case .blueprint:
+            self.appIcon = NSImage(named: "BlueprintImage")!
+
+        case .chalkboard:
+            self.appIcon = NSImage(named: "ChalkboardImage")!
+
+        case .glass:
+            self.appIcon = NSImage(named: "GlassImage")!
+
+        case .holographic:
+            self.appIcon = NSImage(named: "HolographicImage")!
+
+        case .microchip:
+            self.appIcon = NSImage(named: "MicrochipImage")!
+
+        case .paper:
+            self.appIcon = NSImage(named: "PaperImage")!
+
+        case .retro:
+            self.appIcon = NSImage(named: "RetroImage")!
+
+        case .xray:
+            self.appIcon = NSImage(named: "XrayImage")!
 
         case .customStyle:
             guard let ghostColor = config.macosIconGhostColor else { break }
@@ -662,7 +717,7 @@ class AppDelegate: NSObject,
     }
 
     @IBAction func showHelp(_ sender: Any) {
-        guard let url = URL(string: "https://github.com/ghostty-org/ghostty") else { return }
+        guard let url = URL(string: "https://ghostty.org/docs") else { return }
         NSWorkspace.shared.open(url)
     }
 
@@ -684,21 +739,27 @@ class AppDelegate: NSObject,
 
     /// Toggles visibility of all Ghosty Terminal windows. When hidden, activates Ghostty as the frontmost application
     @IBAction func toggleVisibility(_ sender: Any) {
-        // We only care about terminal windows.
-        for window in NSApp.windows.filter({ $0.windowController is BaseTerminalController }) {
-            if isVisible {
-                window.orderOut(nil)
-            } else {
-                window.makeKeyAndOrderFront(nil)
-            }
+        // If we have focus, then we hide all windows.
+        if NSApp.isActive {
+            // Toggle visibility doesn't do anything if the focused window is native
+            // fullscreen. This is only relevant if Ghostty is active.
+            guard let keyWindow = NSApp.keyWindow,
+                  !keyWindow.styleMask.contains(.fullScreen) else { return }
+
+            // Keep track of our hidden state to restore properly
+            self.hiddenState = .init()
+            NSApp.hide(nil)
+            return
         }
 
-        // After bringing them all to front we make sure our app is active too.
-        if !isVisible {
-            NSApp.activate(ignoringOtherApps: true)
-        }
+        // If we're not active, we want to become active
+        NSApp.activate(ignoringOtherApps: true)
 
-        isVisible.toggle()
+        // Bring all windows to the front. Note: we don't use NSApp.unhide because
+        // that will unhide ALL hidden windows. We want to only bring forward the
+        // ones that we hid.
+        hiddenState?.restore()
+        hiddenState = nil
     }
 
     private struct DerivedConfig {
@@ -716,6 +777,35 @@ class AppDelegate: NSObject,
             self.initialWindow = config.initialWindow
             self.shouldQuitAfterLastWindowClosed = config.shouldQuitAfterLastWindowClosed
             self.quickTerminalPosition = config.quickTerminalPosition
+        }
+    }
+
+    private struct ToggleVisibilityState {
+        let hiddenWindows: [Weak<NSWindow>]
+        let keyWindow: Weak<NSWindow>?
+
+        init() {
+            // We need to know the key window so that we can bring focus back to the
+            // right window if it was hidden.
+            self.keyWindow = if let keyWindow = NSApp.keyWindow {
+                .init(keyWindow)
+            } else {
+                nil
+            }
+
+            // We need to keep track of the windows that were visible because we only
+            // want to bring back these windows if we remove the toggle.
+            //
+            // We also ignore fullscreen windows because they don't hide anyways.
+            self.hiddenWindows = NSApp.windows.filter {
+                $0.isVisible &&
+                !$0.styleMask.contains(.fullScreen)
+            }.map { Weak($0) }
+        }
+
+        func restore() {
+            hiddenWindows.forEach { $0.value?.orderFrontRegardless() }
+            keyWindow?.value?.makeKey()
         }
     }
 }
