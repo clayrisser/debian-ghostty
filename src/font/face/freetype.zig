@@ -38,9 +38,6 @@ pub const Face = struct {
     /// Harfbuzz font corresponding to this face.
     hb_font: harfbuzz.Font,
 
-    /// Metrics for this font face. These are useful for renderers.
-    metrics: font.face.Metrics,
-
     /// Freetype load flags for this font face.
     load_flags: font.face.FreetypeLoadFlags,
 
@@ -86,7 +83,6 @@ pub const Face = struct {
             .lib = lib.lib,
             .face = face,
             .hb_font = hb_font,
-            .metrics = try calcMetrics(face, opts.metric_modifiers),
             .load_flags = opts.freetype_load_flags,
         };
         result.quirks_disable_default_font_features = quirks.disableDefaultFontFeatures(&result);
@@ -186,7 +182,6 @@ pub const Face = struct {
     /// for clearing any glyph caches, font atlas data, etc.
     pub fn setSize(self: *Face, opts: font.face.Options) !void {
         try setSize_(self.face, opts.size);
-        self.metrics = try calcMetrics(self.face, opts.metric_modifiers);
     }
 
     fn setSize_(face: freetype.Face, size: font.face.DesiredSize) !void {
@@ -224,6 +219,8 @@ pub const Face = struct {
         vs: []const font.face.Variation,
         opts: font.face.Options,
     ) !void {
+        _ = opts;
+
         // If this font doesn't support variations, we can't do anything.
         if (!self.face.hasMultipleMasters() or vs.len == 0) return;
 
@@ -257,9 +254,6 @@ pub const Face = struct {
 
         // Set them!
         try self.face.setVarDesignCoordinates(coords);
-
-        // We need to recalculate font metrics which may have changed.
-        self.metrics = try calcMetrics(self.face, opts.metric_modifiers);
     }
 
     /// Returns the glyph index for the given Unicode code point. If this
@@ -288,7 +282,6 @@ pub const Face = struct {
         self.face.loadGlyph(glyph_id, .{
             .render = true,
             .color = self.face.hasColor(),
-            .no_bitmap = !self.face.hasColor(),
         }) catch return false;
 
         // If the glyph is SVG we assume colorized
@@ -307,7 +300,7 @@ pub const Face = struct {
         glyph_index: u32,
         opts: font.face.RenderOptions,
     ) !Glyph {
-        const metrics = opts.grid_metrics orelse self.metrics;
+        const metrics = opts.grid_metrics;
 
         // If we have synthetic italic, then we apply a transformation matrix.
         // We have to undo this because synthetic italic works by increasing
@@ -322,14 +315,6 @@ pub const Face = struct {
             // If we have synthetic bold, we have to set some additional
             // glyph properties before render so we don't render here.
             .render = !self.synthetic.bold,
-
-            // Disable bitmap strikes for now since it causes issues with
-            // our cell metrics and rasterization. In the future, this is
-            // all fixable so we can enable it.
-            //
-            // This must be enabled for color faces though because those are
-            // often colored bitmaps, which we support.
-            .no_bitmap = !self.face.hasColor(),
 
             // use options from config
             .no_hinting = !self.load_flags.hinting,
@@ -385,7 +370,7 @@ pub const Face = struct {
                 return error.UnsupportedPixelMode;
             };
 
-            log.warn("converting from pixel_mode={} to atlas_format={}", .{
+            log.debug("converting from pixel_mode={} to atlas_format={}", .{
                 bitmap_ft.pixel_mode,
                 atlas.format,
             });
@@ -598,23 +583,14 @@ pub const Face = struct {
         return @as(opentype.sfnt.F26Dot6, @bitCast(@as(u32, @intCast(v)))).to(f64);
     }
 
-    const CalcMetricsError = error{
+    pub const GetMetricsError = error{
         CopyTableError,
     };
 
-    /// Calculate the metrics associated with a face. This is not public because
-    /// the metrics are calculated for every face and cached since they're
-    /// frequently required for renderers and take up next to little memory space
-    /// in the grand scheme of things.
-    ///
-    /// An aside: the proper way to limit memory usage due to faces is to limit
-    /// the faces with DeferredFaces and reload on demand. A Face can't be converted
-    /// into a DeferredFace but a Face that comes from a DeferredFace can be
-    /// deinitialized anytime and reloaded with the deferred face.
-    fn calcMetrics(
-        face: freetype.Face,
-        modifiers: ?*const font.face.Metrics.ModifierSet,
-    ) CalcMetricsError!font.face.Metrics {
+    /// Get the `FaceMetrics` for this face.
+    pub fn getMetrics(self: *Face) GetMetricsError!font.Metrics.FaceMetrics {
+        const face = self.face;
+
         const size_metrics = face.handle.*.size.*.metrics;
 
         // This code relies on this assumption, and it should always be
@@ -802,7 +778,7 @@ pub const Face = struct {
             };
         };
 
-        var result = font.face.Metrics.calc(.{
+        return .{
             .cell_width = cell_width,
 
             .ascent = ascent,
@@ -817,13 +793,7 @@ pub const Face = struct {
 
             .cap_height = cap_height,
             .ex_height = ex_height,
-        });
-
-        if (modifiers) |m| result.apply(m.*);
-
-        // std.log.warn("font metrics={}", .{result});
-
-        return result;
+        };
     }
 
     /// Copy the font table data for the given tag.
@@ -852,16 +822,31 @@ test {
     // Generate all visible ASCII
     var i: u8 = 32;
     while (i < 127) : (i += 1) {
-        _ = try ft_font.renderGlyph(alloc, &atlas, ft_font.glyphIndex(i).?, .{});
+        _ = try ft_font.renderGlyph(
+            alloc,
+            &atlas,
+            ft_font.glyphIndex(i).?,
+            .{ .grid_metrics = font.Metrics.calc(try ft_font.getMetrics()) },
+        );
     }
 
     // Test resizing
     {
-        const g1 = try ft_font.renderGlyph(alloc, &atlas, ft_font.glyphIndex('A').?, .{});
+        const g1 = try ft_font.renderGlyph(
+            alloc,
+            &atlas,
+            ft_font.glyphIndex('A').?,
+            .{ .grid_metrics = font.Metrics.calc(try ft_font.getMetrics()) },
+        );
         try testing.expectEqual(@as(u32, 11), g1.height);
 
         try ft_font.setSize(.{ .size = .{ .points = 24, .xdpi = 96, .ydpi = 96 } });
-        const g2 = try ft_font.renderGlyph(alloc, &atlas, ft_font.glyphIndex('A').?, .{});
+        const g2 = try ft_font.renderGlyph(
+            alloc,
+            &atlas,
+            ft_font.glyphIndex('A').?,
+            .{ .grid_metrics = font.Metrics.calc(try ft_font.getMetrics()) },
+        );
         try testing.expectEqual(@as(u32, 20), g2.height);
     }
 }
@@ -883,7 +868,12 @@ test "color emoji" {
     );
     defer ft_font.deinit();
 
-    _ = try ft_font.renderGlyph(alloc, &atlas, ft_font.glyphIndex('🥸').?, .{});
+    _ = try ft_font.renderGlyph(
+        alloc,
+        &atlas,
+        ft_font.glyphIndex('🥸').?,
+        .{ .grid_metrics = font.Metrics.calc(try ft_font.getMetrics()) },
+    );
 
     // Make sure this glyph has color
     {
@@ -894,8 +884,11 @@ test "color emoji" {
 
     // resize
     {
-        const glyph = try ft_font.renderGlyph(alloc, &atlas, ft_font.glyphIndex('🥸').?, .{
-            .grid_metrics = .{
+        const glyph = try ft_font.renderGlyph(
+            alloc,
+            &atlas,
+            ft_font.glyphIndex('🥸').?,
+            .{ .grid_metrics = .{
                 .cell_width = 10,
                 .cell_height = 24,
                 .cell_baseline = 0,
@@ -907,70 +900,10 @@ test "color emoji" {
                 .overline_thickness = 0,
                 .box_thickness = 0,
                 .cursor_height = 0,
-            },
-        });
+            } },
+        );
         try testing.expectEqual(@as(u32, 24), glyph.height);
     }
-}
-
-test "metrics" {
-    const testFont = font.embedded.inconsolata;
-    const alloc = testing.allocator;
-
-    var lib = try Library.init();
-    defer lib.deinit();
-
-    var atlas = try font.Atlas.init(alloc, 512, .grayscale);
-    defer atlas.deinit(alloc);
-
-    var ft_font = try Face.init(
-        lib,
-        testFont,
-        .{ .size = .{ .points = 12, .xdpi = 96, .ydpi = 96 } },
-    );
-    defer ft_font.deinit();
-
-    try testing.expectEqual(font.face.Metrics{
-        .cell_width = 8,
-        // The cell height is 17 px because the calculation is
-        //
-        //  ascender - descender + gap
-        //
-        // which, for inconsolata is
-        //
-        //  859 - -190 + 0
-        //
-        // font units, at 1000 units per em that works out to 1.049 em,
-        // and 1em should be the point size * dpi scale, so 12 * (96/72)
-        // which is 16, and 16 * 1.049 = 16.784, which finally is rounded
-        // to 17.
-        .cell_height = 17,
-        .cell_baseline = 3,
-        .underline_position = 17,
-        .underline_thickness = 1,
-        .strikethrough_position = 10,
-        .strikethrough_thickness = 1,
-        .overline_position = 0,
-        .overline_thickness = 1,
-        .box_thickness = 1,
-        .cursor_height = 17,
-    }, ft_font.metrics);
-
-    // Resize should change metrics
-    try ft_font.setSize(.{ .size = .{ .points = 24, .xdpi = 96, .ydpi = 96 } });
-    try testing.expectEqual(font.face.Metrics{
-        .cell_width = 16,
-        .cell_height = 34,
-        .cell_baseline = 6,
-        .underline_position = 34,
-        .underline_thickness = 2,
-        .strikethrough_position = 19,
-        .strikethrough_thickness = 2,
-        .overline_position = 0,
-        .overline_thickness = 2,
-        .box_thickness = 2,
-        .cursor_height = 34,
-    }, ft_font.metrics);
 }
 
 test "mono to rgba" {
@@ -983,11 +916,16 @@ test "mono to rgba" {
     var atlas = try font.Atlas.init(alloc, 512, .rgba);
     defer atlas.deinit(alloc);
 
-    var ft_font = try Face.init(lib, testFont, .{ .size = .{ .points = 12 } });
+    var ft_font = try Face.init(lib, testFont, .{ .size = .{ .points = 12, .xdpi = 72, .ydpi = 72 } });
     defer ft_font.deinit();
 
     // glyph 3 is mono in Noto
-    _ = try ft_font.renderGlyph(alloc, &atlas, 3, .{});
+    _ = try ft_font.renderGlyph(
+        alloc,
+        &atlas,
+        3,
+        .{ .grid_metrics = font.Metrics.calc(try ft_font.getMetrics()) },
+    );
 }
 
 test "svg font table" {
@@ -997,11 +935,72 @@ test "svg font table" {
     var lib = try font.Library.init();
     defer lib.deinit();
 
-    var face = try Face.init(lib, testFont, .{ .size = .{ .points = 12 } });
+    var face = try Face.init(lib, testFont, .{ .size = .{ .points = 12, .xdpi = 72, .ydpi = 72 } });
     defer face.deinit();
 
     const table = (try face.copyTable(alloc, "SVG ")).?;
     defer alloc.free(table);
 
     try testing.expectEqual(430, table.len);
+}
+
+const terminus_i =
+    \\........
+    \\........
+    \\...#....
+    \\...#....
+    \\........
+    \\..##....
+    \\...#....
+    \\...#....
+    \\...#....
+    \\...#....
+    \\...#....
+    \\..###...
+    \\........
+    \\........
+    \\........
+    \\........
+;
+// Including the newline
+const terminus_i_pitch = 9;
+
+test "bitmap glyph" {
+    const alloc = testing.allocator;
+    const testFont = font.embedded.terminus_ttf;
+
+    var lib = try Library.init();
+    defer lib.deinit();
+
+    var atlas = try font.Atlas.init(alloc, 512, .grayscale);
+    defer atlas.deinit(alloc);
+
+    // Any glyph at 12pt @ 96 DPI is a bitmap
+    var ft_font = try Face.init(lib, testFont, .{ .size = .{
+        .points = 12,
+        .xdpi = 96,
+        .ydpi = 96,
+    } });
+    defer ft_font.deinit();
+
+    // glyph 77 = 'i'
+    const glyph = try ft_font.renderGlyph(
+        alloc,
+        &atlas,
+        77,
+        .{ .grid_metrics = font.Metrics.calc(try ft_font.getMetrics()) },
+    );
+
+    // should render crisp
+    try testing.expectEqual(8, glyph.width);
+    try testing.expectEqual(16, glyph.height);
+    for (0..glyph.height) |y| {
+        for (0..glyph.width) |x| {
+            const pixel = terminus_i[y * terminus_i_pitch + x];
+            try testing.expectEqual(
+                @as(u8, if (pixel == '#') 255 else 0),
+                atlas.data[(glyph.atlas_y + y) * atlas.size + (glyph.atlas_x + x)],
+            );
+        }
+    }
 }

@@ -66,7 +66,7 @@ extension Ghostty {
 
     /// An enum that is used for the directions that a split focus event can change.
     enum SplitFocusDirection {
-        case previous, next, top, bottom, left, right
+        case previous, next, up, down, left, right
 
         /// Initialize from a Ghostty API enum.
         static func from(direction: ghostty_action_goto_split_e) -> Self? {
@@ -77,11 +77,11 @@ extension Ghostty {
             case GHOSTTY_GOTO_SPLIT_NEXT:
                 return .next
 
-            case GHOSTTY_GOTO_SPLIT_TOP:
-                return .top
+            case GHOSTTY_GOTO_SPLIT_UP:
+                return .up
 
-            case GHOSTTY_GOTO_SPLIT_BOTTOM:
-                return .bottom
+            case GHOSTTY_GOTO_SPLIT_DOWN:
+                return .down
 
             case GHOSTTY_GOTO_SPLIT_LEFT:
                 return .left
@@ -102,11 +102,11 @@ extension Ghostty {
             case .next:
                 return GHOSTTY_GOTO_SPLIT_NEXT
 
-            case .top:
-                return GHOSTTY_GOTO_SPLIT_TOP
+            case .up:
+                return GHOSTTY_GOTO_SPLIT_UP
 
-            case .bottom:
-                return GHOSTTY_GOTO_SPLIT_BOTTOM
+            case .down:
+                return GHOSTTY_GOTO_SPLIT_DOWN
 
             case .left:
                 return GHOSTTY_GOTO_SPLIT_LEFT
@@ -159,7 +159,7 @@ extension Ghostty {
         case osc_52_read
 
         /// An application is attempting to write to the clipboard using OSC 52
-        case osc_52_write
+        case osc_52_write(OSPasteboard?)
 
         /// The text to show in the clipboard confirmation prompt for a given request type
         func text() -> String {
@@ -188,7 +188,7 @@ extension Ghostty {
             case GHOSTTY_CLIPBOARD_REQUEST_OSC_52_READ:
                 return .osc_52_read
             case GHOSTTY_CLIPBOARD_REQUEST_OSC_52_WRITE:
-                return .osc_52_write
+                return .osc_52_write(nil)
             default:
                 return nil
             }
@@ -198,6 +198,14 @@ extension Ghostty {
     /// macos-icon
     enum MacOSIcon: String {
         case official
+        case blueprint
+        case chalkboard
+        case glass
+        case holographic
+        case microchip
+        case paper
+        case retro
+        case xray
         case customStyle = "custom-style"
     }
 
@@ -236,6 +244,9 @@ extension Notification.Name {
     /// Goto tab. Has tab index in the userinfo.
     static let ghosttyMoveTab = Notification.Name("com.mitchellh.ghostty.moveTab")
     static let GhosttyMoveTabKey = ghosttyMoveTab.rawValue
+
+    /// Close tab
+    static let ghosttyCloseTab = Notification.Name("com.mitchellh.ghostty.closeTab")
 }
 
 // NOTE: I am moving all of these to Notification.Name extensions over time. This

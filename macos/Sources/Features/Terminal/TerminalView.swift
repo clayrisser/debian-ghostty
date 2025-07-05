@@ -10,7 +10,7 @@ protocol TerminalViewDelegate: AnyObject {
 
     /// The title of the terminal should change.
     func titleDidChange(to: String)
-    
+
     /// The URL of the pwd should change.
     func pwdDidChange(to: URL?)
 
@@ -56,23 +56,18 @@ struct TerminalView<ViewModel: TerminalViewModel>: View {
 
     // The title for our window
     private var title: String {
-        var title = "👻"
-
-        if let surfaceTitle = surfaceTitle {
-            if (surfaceTitle.count > 0) {
-                title = surfaceTitle
-            }
+        if let surfaceTitle, !surfaceTitle.isEmpty {
+            return surfaceTitle
         }
-
-        return title
+        return "👻"
     }
 
     // The pwd of the focused surface as a URL
     private var pwdURL: URL? {
-        guard let surfacePwd else { return nil }
+        guard let surfacePwd, surfacePwd != "" else { return nil }
         return URL(fileURLWithPath: surfacePwd)
     }
-    
+
     var body: some View {
         switch ghostty.readiness {
         case .loading:

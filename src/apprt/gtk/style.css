@@ -33,11 +33,33 @@ label.size-overlay.hidden {
   opacity: 0;
 }
 
+window.ssd.no-border-radius {
+  /* Without clearing the border radius, at least on Mutter with
+   * gtk-titlebar=true and gtk-adwaita=false, there is some window artifacting
+   * that this will mitigate.
+   */
+  border-radius: 0 0;
+}
+
 .transparent {
   background-color: transparent;
 }
 
-separator {
+.terminal-window .notebook separator {
   background-color: rgba(250, 250, 250, 1);
   background-clip: content-box;
+
+  /* This works around the oversized drag area for the right side of GtkPaned.
+   *
+   * Upstream Gtk issue:
+   * https://gitlab.gnome.org/GNOME/gtk/-/issues/4484#note_2362002
+   *
+   * Ghostty issue:
+   * https://github.com/ghostty-org/ghostty/issues/3020
+   *
+   * Without this, it's not possible to select the first character on the
+   * right-hand side of a split.
+   */
+  margin: 0;
+  padding: 0;
 }

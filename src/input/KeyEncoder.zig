@@ -282,7 +282,12 @@ fn legacy(
     // If we match a control sequence, we output that directly. For
     // ctrlSeq we have to use all mods because we want it to only
     // match ctrl+<char>.
-    if (ctrlSeq(self.event.utf8, self.event.unshifted_codepoint, all_mods)) |char| {
+    if (ctrlSeq(
+        self.event.key,
+        self.event.utf8,
+        self.event.unshifted_codepoint,
+        all_mods,
+    )) |char| {
         // C0 sequences support alt-as-esc prefixing.
         if (binding_mods.alt) {
             if (buf.len < 2) return error.OutOfMemory;
@@ -538,25 +543,51 @@ fn pcStyleFunctionKey(
 /// into a C0 byte. There are many cases for this and you should read
 /// the source code to understand them.
 fn ctrlSeq(
+    logical_key: key.Key,
     utf8: []const u8,
     unshifted_codepoint: u21,
     mods: key.Mods,
 ) ?u8 {
+    const ctrl_only = comptime (key.Mods{ .ctrl = true }).int();
+
     // If ctrl is not pressed then we never do anything.
     if (!mods.ctrl) return null;
 
-    // If we don't have exactly one byte in our utf8 sequence, then
-    // we don't do anything, since all our ctrl keys are based on ASCII.
-    if (utf8.len != 1) return null;
-
     const char, const unset_mods = unset_mods: {
-        var char = utf8[0];
         var unset_mods = mods;
 
         // Remove alt from our modifiers because it does not impact whether
         // we are generating a ctrl sequence and we handle the ESC-prefix
         // logic separately.
         unset_mods.alt = false;
+
+        var char: u8 = char: {
+            // If we have exactly one UTF8 byte, we assume that is the
+            // character we want to convert to a C0 byte.
+            if (utf8.len == 1) break :char utf8[0];
+
+            // If we have a logical key that maps to a single byte
+            // printable character, we use that. History to explain this:
+            // this was added to support cyrillic keyboard layouts such
+            // as Russian and Mongolian. These layouts have a `c` key that
+            // maps to U+0441 (cyrillic small letter "c") but every
+            // terminal I've tested encodes this as ctrl+c.
+            if (logical_key.codepoint()) |cp| {
+                if (std.math.cast(u8, cp)) |byte| {
+                    // For this specific case, we only map to the key if
+                    // we have exactly ctrl pressed. This is because shift
+                    // would modify the key and we don't know how to do that
+                    // properly here (don't have the layout). And we want
+                    // to encode shift as CSIu.
+                    if (unset_mods.int() != ctrl_only) return null;
+                    break :char byte;
+                }
+            }
+
+            // Otherwise we don't have a character to convert that
+            // we can reliably map to a C0 byte.
+            return null;
+        };
 
         // Remove shift if we have something outside of the US letter
         // range. This is so that characters such as `ctrl+shift+-`
@@ -596,7 +627,6 @@ fn ctrlSeq(
     };
 
     // After unsetting, we only continue if we have ONLY control set.
-    const ctrl_only = comptime (key.Mods{ .ctrl = true }).int();
     if (unset_mods.int() != ctrl_only) return null;
 
     // From Kitty's key encoding logic. I tried to discern the exact
@@ -2132,36 +2162,52 @@ test "legacy: hu layout ctrl+ő sends proper codepoint" {
     const actual = try enc.legacy(&buf);
     try testing.expectEqualStrings("[337;5u", actual[1..]);
 }
+
 test "ctrlseq: normal ctrl c" {
-    const seq = ctrlSeq("c", 'c', .{ .ctrl = true });
+    const seq = ctrlSeq(.invalid, "c", 'c', .{ .ctrl = true });
     try testing.expectEqual(@as(u8, 0x03), seq.?);
 }
 
 test "ctrlseq: normal ctrl c, right control" {
-    const seq = ctrlSeq("c", 'c', .{ .ctrl = true, .sides = .{ .ctrl = .right } });
+    const seq = ctrlSeq(.invalid, "c", 'c', .{ .ctrl = true, .sides = .{ .ctrl = .right } });
     try testing.expectEqual(@as(u8, 0x03), seq.?);
 }
 
 test "ctrlseq: alt should be allowed" {
-    const seq = ctrlSeq("c", 'c', .{ .alt = true, .ctrl = true });
+    const seq = ctrlSeq(.invalid, "c", 'c', .{ .alt = true, .ctrl = true });
     try testing.expectEqual(@as(u8, 0x03), seq.?);
 }
 
 test "ctrlseq: no ctrl does nothing" {
-    try testing.expect(ctrlSeq("c", 'c', .{}) == null);
+    try testing.expect(ctrlSeq(.invalid, "c", 'c', .{}) == null);
 }
 
 test "ctrlseq: shifted non-character" {
-    const seq = ctrlSeq("_", '-', .{ .ctrl = true, .shift = true });
+    const seq = ctrlSeq(.invalid, "_", '-', .{ .ctrl = true, .shift = true });
     try testing.expectEqual(@as(u8, 0x1F), seq.?);
 }
 
 test "ctrlseq: caps ascii letter" {
-    const seq = ctrlSeq("C", 'c', .{ .ctrl = true, .caps_lock = true });
+    const seq = ctrlSeq(.invalid, "C", 'c', .{ .ctrl = true, .caps_lock = true });
     try testing.expectEqual(@as(u8, 0x03), seq.?);
 }
 
 test "ctrlseq: shift does not generate ctrl seq" {
-    try testing.expect(ctrlSeq("C", 'c', .{ .shift = true }) == null);
-    try testing.expect(ctrlSeq("C", 'c', .{ .shift = true, .ctrl = true }) == null);
+    try testing.expect(ctrlSeq(.invalid, "C", 'c', .{ .shift = true }) == null);
+    try testing.expect(ctrlSeq(.invalid, "C", 'c', .{ .shift = true, .ctrl = true }) == null);
+}
+
+test "ctrlseq: russian ctrl c" {
+    const seq = ctrlSeq(.c, "с", 0x0441, .{ .ctrl = true });
+    try testing.expectEqual(@as(u8, 0x03), seq.?);
+}
+
+test "ctrlseq: russian shifted ctrl c" {
+    const seq = ctrlSeq(.c, "с", 0x0441, .{ .ctrl = true, .shift = true });
+    try testing.expect(seq == null);
+}
+
+test "ctrlseq: russian alt ctrl c" {
+    const seq = ctrlSeq(.c, "с", 0x0441, .{ .ctrl = true, .alt = true });
+    try testing.expectEqual(@as(u8, 0x03), seq.?);
 }

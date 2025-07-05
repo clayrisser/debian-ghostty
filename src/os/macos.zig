@@ -24,42 +24,27 @@ pub const AppSupportDirError = Allocator.Error || error{AppleAPIFailed};
 pub fn appSupportDir(
     alloc: Allocator,
     sub_path: []const u8,
-) AppSupportDirError![]u8 {
-    comptime assert(builtin.target.isDarwin());
-
-    const NSFileManager = objc.getClass("NSFileManager").?;
-    const manager = NSFileManager.msgSend(
-        objc.Object,
-        objc.sel("defaultManager"),
-        .{},
+) AppSupportDirError![]const u8 {
+    return try commonDir(
+        alloc,
+        .NSApplicationSupportDirectory,
+        &.{ build_config.bundle_id, sub_path },
     );
+}
 
-    const url = manager.msgSend(
-        objc.Object,
-        objc.sel("URLForDirectory:inDomain:appropriateForURL:create:error:"),
-        .{
-            NSSearchPathDirectory.NSApplicationSupportDirectory,
-            NSSearchPathDomainMask.NSUserDomainMask,
-            @as(?*anyopaque, null),
-            true,
-            @as(?*anyopaque, null),
-        },
+pub const CacheDirError = Allocator.Error || error{AppleAPIFailed};
+
+/// Return the path to the system cache directory with the given sub path joined.
+/// This allocates the result using the given allocator.
+pub fn cacheDir(
+    alloc: Allocator,
+    sub_path: []const u8,
+) CacheDirError![]const u8 {
+    return try commonDir(
+        alloc,
+        .NSCachesDirectory,
+        &.{ build_config.bundle_id, sub_path },
     );
-
-    // I don't think this is possible but just in case.
-    if (url.value == null) return error.AppleAPIFailed;
-
-    // Get the UTF-8 string from the URL.
-    const path = url.getProperty(objc.Object, "path");
-    const c_str = path.getProperty(?[*:0]const u8, "UTF8String") orelse
-        return error.AppleAPIFailed;
-    const app_support_dir = std.mem.sliceTo(c_str, 0);
-
-    return try std.fs.path.join(alloc, &.{
-        app_support_dir,
-        build_config.bundle_id,
-        sub_path,
-    });
 }
 
 pub const SetQosClassError = error{
@@ -110,9 +95,79 @@ pub const NSOperatingSystemVersion = extern struct {
 };
 
 pub const NSSearchPathDirectory = enum(c_ulong) {
+    NSCachesDirectory = 13,
     NSApplicationSupportDirectory = 14,
 };
 
 pub const NSSearchPathDomainMask = enum(c_ulong) {
     NSUserDomainMask = 1,
 };
+
+fn commonDir(
+    alloc: Allocator,
+    directory: NSSearchPathDirectory,
+    sub_paths: []const []const u8,
+) (error{AppleAPIFailed} || Allocator.Error)![]const u8 {
+    comptime assert(builtin.target.isDarwin());
+
+    const NSFileManager = objc.getClass("NSFileManager").?;
+    const manager = NSFileManager.msgSend(
+        objc.Object,
+        objc.sel("defaultManager"),
+        .{},
+    );
+
+    const url = manager.msgSend(
+        objc.Object,
+        objc.sel("URLForDirectory:inDomain:appropriateForURL:create:error:"),
+        .{
+            directory,
+            NSSearchPathDomainMask.NSUserDomainMask,
+            @as(?*anyopaque, null),
+            true,
+            @as(?*anyopaque, null),
+        },
+    );
+
+    if (url.value == null) return error.AppleAPIFailed;
+
+    const path = url.getProperty(objc.Object, "path");
+    const c_str = path.getProperty(?[*:0]const u8, "UTF8String") orelse
+        return error.AppleAPIFailed;
+    const base_dir = std.mem.sliceTo(c_str, 0);
+
+    // Create a new array with base_dir as the first element
+    var paths = try alloc.alloc([]const u8, sub_paths.len + 1);
+    paths[0] = base_dir;
+    @memcpy(paths[1..], sub_paths);
+    defer alloc.free(paths);
+
+    return try std.fs.path.join(alloc, paths);
+}
+
+test "cacheDir paths" {
+    if (!builtin.target.isDarwin()) return;
+
+    const testing = std.testing;
+    const alloc = testing.allocator;
+
+    // Test base path
+    {
+        const cache_path = try cacheDir(alloc, "");
+        defer alloc.free(cache_path);
+        try testing.expect(std.mem.indexOf(u8, cache_path, "Caches") != null);
+        try testing.expect(std.mem.indexOf(u8, cache_path, build_config.bundle_id) != null);
+    }
+
+    // Test with subdir
+    {
+        const cache_path = try cacheDir(alloc, "test");
+        defer alloc.free(cache_path);
+        try testing.expect(std.mem.indexOf(u8, cache_path, "Caches") != null);
+        try testing.expect(std.mem.indexOf(u8, cache_path, build_config.bundle_id) != null);
+
+        const bundle_path = try std.fmt.allocPrint(alloc, "{s}/test", .{build_config.bundle_id});
+        defer alloc.free(bundle_path);
+        try testing.expect(std.mem.indexOf(u8, cache_path, bundle_path) != null);
+    }
+}

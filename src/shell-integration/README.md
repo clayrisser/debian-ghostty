@@ -6,7 +6,7 @@ supports.
 
 This README is meant as developer documentation and not as
 user documentation. For user documentation, see the main
-README.
+README or [ghostty.org](https://ghostty.org/docs)
 
 ## Implementation Details
 
@@ -47,7 +47,19 @@ made available for use as modules by way of `use <filename>`.
 Ghostty launches Elvish, passing the environment with `XDG_DATA_DIRS`prepended
 with `$GHOSTTY_RESOURCES_DIR/src/shell-integration`. It contains
 `./elvish/lib/ghostty-integration.elv`. The user can then import it
-by `use ghostty-integration`, which will run the integration routines.
+by `use ghostty-integration` every time after shell startup or
+autostart integration in `$XDG_CONFIG_HOME/elvish/rc.elv`,
+which will run the integration routines.
+
+If you decide to autostart `ghostty-integration` with `rc.elv`, you should
+detect whether the terminal is Ghostty or not. To do this, add this to the end
+of your `rc.elv` file:
+
+```elvish
+if (eq $E:TERM "xterm-ghostty") {
+  use ghostty-integration
+}
+```
 
 The [Elvish](https://elv.sh) shell integration is supported by
 the community and is not officially supported by Ghostty. We distribute
@@ -73,6 +85,6 @@ sequence occurs.
 
 ```bash
 if [[ -n $GHOSTTY_RESOURCES_DIR ]]; then
-  "$GHOSTTY_RESOURCES_DIR"/shell-integration/zsh/ghostty-integration
+  source "$GHOSTTY_RESOURCES_DIR"/shell-integration/zsh/ghostty-integration
 fi
 ```

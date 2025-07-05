@@ -49,7 +49,7 @@ alloc: std.mem.Allocator,
 config: DerivedConfig,
 
 /// Current font metrics defining our grid.
-grid_metrics: font.face.Metrics,
+grid_metrics: font.Metrics,
 
 /// The size of everything.
 size: renderer.Size,
@@ -89,17 +89,29 @@ texture_color_resized: usize = 0,
 /// True if the window is focused
 focused: bool,
 
-/// The actual foreground color. May differ from the config foreground color if
-/// changed by a terminal application
-foreground_color: terminal.color.RGB,
+/// The foreground color set by an OSC 10 sequence. If unset then the default
+/// value from the config file is used.
+foreground_color: ?terminal.color.RGB,
 
-/// The actual background color. May differ from the config background color if
-/// changed by a terminal application
-background_color: terminal.color.RGB,
+/// Foreground color set in the user's config file.
+default_foreground_color: terminal.color.RGB,
 
-/// The actual cursor color. May differ from the config cursor color if changed
-/// by a terminal application
+/// The background color set by an OSC 11 sequence. If unset then the default
+/// value from the config file is used.
+background_color: ?terminal.color.RGB,
+
+/// Background color set in the user's config file.
+default_background_color: terminal.color.RGB,
+
+/// The cursor color set by an OSC 12 sequence. If unset then
+/// default_cursor_color is used.
 cursor_color: ?terminal.color.RGB,
+
+/// Default cursor color when no color is set explicitly by an OSC 12 command.
+/// This is cursor color as set in the user's config, if any. If no cursor color
+/// is set in the user's config, then the cursor color is determined by the
+/// current foreground color.
+default_cursor_color: ?terminal.color.RGB,
 
 /// When `cursor_color` is null, swap the foreground and background colors of
 /// the cell under the cursor for the cursor color. Otherwise, use the default
@@ -134,7 +146,7 @@ image_bg_end: u32 = 0,
 image_text_end: u32 = 0,
 image_virtual: bool = false,
 
-/// Defererred OpenGL operation to update the screen size.
+/// Deferred OpenGL operation to update the screen size.
 const SetScreenSize = struct {
     size: renderer.Size,
 
@@ -219,7 +231,7 @@ const SetScreenSize = struct {
 };
 
 const SetFontSize = struct {
-    metrics: font.face.Metrics,
+    metrics: font.Metrics,
 
     fn apply(self: SetFontSize, r: *const OpenGL) !void {
         const gl_state = r.gl_state orelse return error.OpenGLUninitialized;
@@ -260,6 +272,7 @@ pub const DerivedConfig = struct {
     arena: ArenaAllocator,
 
     font_thicken: bool,
+    font_thicken_strength: u8,
     font_features: std.ArrayListUnmanaged([:0]const u8),
     font_styles: font.CodepointResolver.StyleStatus,
     cursor_color: ?terminal.color.RGB,
@@ -309,6 +322,7 @@ pub const DerivedConfig = struct {
         return .{
             .background_opacity = @max(0, @min(1, config.@"background-opacity")),
             .font_thicken = config.@"font-thicken",
+            .font_thicken_strength = config.@"font-thicken-strength",
             .font_features = font_features.list,
             .font_styles = font_styles,
 
@@ -386,9 +400,12 @@ pub fn init(alloc: Allocator, options: renderer.Options) !OpenGL {
         .font_shaper_cache = font.ShaperCache.init(),
         .draw_background = options.config.background,
         .focused = true,
-        .foreground_color = options.config.foreground,
-        .background_color = options.config.background,
-        .cursor_color = options.config.cursor_color,
+        .foreground_color = null,
+        .default_foreground_color = options.config.foreground,
+        .background_color = null,
+        .default_background_color = options.config.background,
+        .cursor_color = null,
+        .default_cursor_color = options.config.cursor_color,
         .cursor_invert = options.config.cursor_invert,
         .surface_mailbox = options.surface_mailbox,
         .deferred_font_size = .{ .metrics = grid.metrics },
@@ -689,8 +706,6 @@ pub fn updateFrame(
 
     // Update all our data as tightly as possible within the mutex.
     var critical: Critical = critical: {
-        const grid_size = self.size.grid();
-
         state.mutex.lock();
         defer state.mutex.unlock();
 
@@ -701,28 +716,34 @@ pub fn updateFrame(
         }
 
         // Swap bg/fg if the terminal is reversed
-        const bg = self.background_color;
-        const fg = self.foreground_color;
+        const bg = self.background_color orelse self.default_background_color;
+        const fg = self.foreground_color orelse self.default_foreground_color;
         defer {
-            self.background_color = bg;
-            self.foreground_color = fg;
-        }
-        if (state.terminal.modes.get(.reverse_colors)) {
-            self.background_color = fg;
-            self.foreground_color = bg;
+            if (self.background_color) |*c| {
+                c.* = bg;
+            } else {
+                self.default_background_color = bg;
+            }
+
+            if (self.foreground_color) |*c| {
+                c.* = fg;
+            } else {
+                self.default_foreground_color = fg;
+            }
         }
 
-        // If our terminal screen size doesn't match our expected renderer
-        // size then we skip a frame. This can happen if the terminal state
-        // is resized between when the renderer mailbox is drained and when
-        // the state mutex is acquired inside this function.
-        //
-        // For some reason this doesn't seem to cause any significant issues
-        // with flickering while resizing. '\_('-')_/'
-        if (grid_size.rows != state.terminal.rows or
-            grid_size.columns != state.terminal.cols)
-        {
-            return;
+        if (state.terminal.modes.get(.reverse_colors)) {
+            if (self.background_color) |*c| {
+                c.* = fg;
+            } else {
+                self.default_background_color = fg;
+            }
+
+            if (self.foreground_color) |*c| {
+                c.* = bg;
+            } else {
+                self.default_foreground_color = bg;
+            }
         }
 
         // Get the viewport pin so that we can compare it to the current.
@@ -730,7 +751,7 @@ pub fn updateFrame(
 
         // We used to share terminal state, but we've since learned through
         // analysis that it is faster to copy the terminal state than to
-        // hold the lock wile rebuilding GPU cells.
+        // hold the lock while rebuilding GPU cells.
         var screen_copy = try state.terminal.screen.clone(
             self.alloc,
             .{ .viewport = .{} },
@@ -820,7 +841,7 @@ pub fn updateFrame(
 
         break :critical .{
             .full_rebuild = full_rebuild,
-            .gl_bg = self.background_color,
+            .gl_bg = self.background_color orelse self.default_background_color,
             .screen = screen_copy,
             .screen_type = state.terminal.active_screen,
             .mouse = state.mouse,
@@ -1240,10 +1261,23 @@ pub fn rebuildCells(
         }
     }
 
-    // Build each cell
+    const grid_size = self.size.grid();
+
+    // We rebuild the cells row-by-row because we do font shaping by row.
     var row_it = screen.pages.rowIterator(.left_up, .{ .viewport = .{} }, null);
-    var y: terminal.size.CellCountInt = screen.pages.rows;
+    // If our cell contents buffer is shorter than the screen viewport,
+    // we render the rows that fit, starting from the bottom. If instead
+    // the viewport is shorter than the cell contents buffer, we align
+    // the top of the viewport with the top of the contents buffer.
+    var y: terminal.size.CellCountInt = @min(
+        screen.pages.rows,
+        grid_size.rows,
+    );
     while (row_it.next()) |row| {
+        // The viewport may have more rows than our cell contents,
+        // so we need to break from the loop early if we hit y = 0.
+        if (y == 0) break;
+
         y -= 1;
 
         // True if we want to do font shaping around the cursor. We want to
@@ -1298,12 +1332,12 @@ pub fn rebuildCells(
             .extend => if (y == 0) {
                 self.padding_extend_top = !row.neverExtendBg(
                     color_palette,
-                    self.background_color,
+                    self.background_color orelse self.default_background_color,
                 );
             } else if (y == self.size.grid().rows - 1) {
                 self.padding_extend_bottom = !row.neverExtendBg(
                     color_palette,
-                    self.background_color,
+                    self.background_color orelse self.default_background_color,
                 );
             },
         }
@@ -1320,7 +1354,11 @@ pub fn rebuildCells(
         var shaper_cells: ?[]const font.shape.Cell = null;
         var shaper_cells_i: usize = 0;
 
-        const row_cells = row.cells(.all);
+        const row_cells_all = row.cells(.all);
+
+        // If our viewport is wider than our cell contents buffer,
+        // we still only process cells up to the width of the buffer.
+        const row_cells = row_cells_all[0..@min(row_cells_all.len, grid_size.columns)];
 
         for (row_cells, 0..) |*cell, x| {
             // If this cell falls within our preedit range then we
@@ -1412,7 +1450,7 @@ pub fn rebuildCells(
                 false;
 
             const bg_style = style.bg(cell, color_palette);
-            const fg_style = style.fg(color_palette, self.config.bold_is_bright) orelse self.foreground_color;
+            const fg_style = style.fg(color_palette, self.config.bold_is_bright) orelse self.foreground_color orelse self.default_foreground_color;
 
             // The final background color for the cell.
             const bg = bg: {
@@ -1432,7 +1470,7 @@ pub fn rebuildCells(
                         // If we don't have invert selection fg/bg set then we
                         // just use the selection background if set, otherwise
                         // the default fg color.
-                        break :bg self.config.selection_background orelse self.foreground_color;
+                        break :bg self.config.selection_background orelse self.foreground_color orelse self.default_foreground_color;
                 }
 
                 // Not selected
@@ -1454,7 +1492,7 @@ pub fn rebuildCells(
                     // If we don't have invert selection fg/bg set
                     // then we just use the selection foreground if
                     // set, otherwise the default bg color.
-                    break :fg self.config.selection_foreground orelse self.background_color;
+                    break :fg self.config.selection_foreground orelse self.background_color orelse self.default_background_color;
                 }
 
                 // Whether we need to use the bg color as our fg color:
@@ -1463,7 +1501,7 @@ pub fn rebuildCells(
                 //    Note: if selected then invert sel fg / bg must be
                 //    false since we separately handle it if true above.
                 break :fg if (style.flags.inverse != selected)
-                    bg_style orelse self.background_color
+                    bg_style orelse self.background_color orelse self.default_background_color
                 else
                     fg_style;
             };
@@ -1490,7 +1528,7 @@ pub fn rebuildCells(
 
                     // If we have a background and its not the default background
                     // then we apply background opacity
-                    if (style.bg(cell, color_palette) != null and !rgb.eql(self.background_color)) {
+                    if (style.bg(cell, color_palette) != null and !rgb.eql(self.background_color orelse self.default_background_color)) {
                         break :bg_alpha default;
                     }
 
@@ -1699,12 +1737,17 @@ pub fn rebuildCells(
             break :cursor_style;
         }
 
-        const cursor_color = self.cursor_color orelse color: {
+        const cursor_color = self.cursor_color orelse self.default_cursor_color orelse color: {
             if (self.cursor_invert) {
+                // Use the foreground color from the cell under the cursor, if any.
                 const sty = screen.cursor.page_pin.style(screen.cursor.page_cell);
-                break :color sty.fg(color_palette, self.config.bold_is_bright) orelse self.foreground_color;
+                break :color if (sty.flags.inverse)
+                    // If the cell is reversed, use background color instead.
+                    (sty.bg(screen.cursor.page_cell, color_palette) orelse self.background_color orelse self.default_background_color)
+                else
+                    (sty.fg(color_palette, self.config.bold_is_bright) orelse self.foreground_color orelse self.default_foreground_color);
             } else {
-                break :color self.foreground_color;
+                break :color self.foreground_color orelse self.default_foreground_color;
             }
         };
 
@@ -1712,12 +1755,17 @@ pub fn rebuildCells(
         for (cursor_cells.items) |*cell| {
             if (cell.mode.isFg() and cell.mode != .fg_color) {
                 const cell_color = if (self.cursor_invert) blk: {
+                    // Use the background color from the cell under the cursor, if any.
                     const sty = screen.cursor.page_pin.style(screen.cursor.page_cell);
-                    break :blk sty.bg(screen.cursor.page_cell, color_palette) orelse self.background_color;
+                    break :blk if (sty.flags.inverse)
+                        // If the cell is reversed, use foreground color instead.
+                        (sty.fg(color_palette, self.config.bold_is_bright) orelse self.foreground_color orelse self.default_foreground_color)
+                    else
+                        (sty.bg(screen.cursor.page_cell, color_palette) orelse self.background_color orelse self.default_background_color);
                 } else if (self.config.cursor_text) |txt|
                     txt
                 else
-                    self.background_color;
+                    self.background_color orelse self.default_background_color;
 
                 cell.r = cell_color.r;
                 cell.g = cell_color.g;
@@ -1742,8 +1790,8 @@ fn addPreeditCell(
     y: usize,
 ) !void {
     // Preedit is rendered inverted
-    const bg = self.foreground_color;
-    const fg = self.background_color;
+    const bg = self.foreground_color orelse self.default_foreground_color;
+    const fg = self.background_color orelse self.default_background_color;
 
     // Render the glyph for our preedit text
     const render_ = self.font_grid.renderCodepoint(
@@ -2059,6 +2107,7 @@ fn addGlyph(
         .{
             .grid_metrics = self.grid_metrics,
             .thicken = self.config.font_thicken,
+            .thicken_strength = self.config.font_thicken_strength,
         },
     );
 
@@ -2122,10 +2171,10 @@ pub fn changeConfig(self: *OpenGL, config: *DerivedConfig) !void {
     self.font_shaper_cache = font_shaper_cache;
 
     // Set our new colors
-    self.background_color = config.background;
-    self.foreground_color = config.foreground;
+    self.default_background_color = config.background;
+    self.default_foreground_color = config.foreground;
+    self.default_cursor_color = if (!config.cursor_invert) config.cursor_color else null;
     self.cursor_invert = config.cursor_invert;
-    self.cursor_color = if (!config.cursor_invert) config.cursor_color else null;
 
     // Update our uniforms
     self.deferred_config = .{};
@@ -2303,11 +2352,9 @@ pub fn drawFrame(self: *OpenGL, surface: *apprt.Surface) !void {
 }
 
 /// Draw the custom shaders.
-fn drawCustomPrograms(
-    self: *OpenGL,
-    custom_state: *custom.State,
-) !void {
+fn drawCustomPrograms(self: *OpenGL, custom_state: *custom.State) !void {
     _ = self;
+    assert(custom_state.programs.len > 0);
 
     // Bind our state that is global to all custom shaders
     const custom_bind = try custom_state.bind();
@@ -2318,10 +2365,10 @@ fn drawCustomPrograms(
 
     // Go through each custom shader and draw it.
     for (custom_state.programs) |program| {
-        // Bind our cell program state, buffers
         const bind = try program.bind();
         defer bind.unbind();
         try bind.draw();
+        try custom_state.copyFramebuffer();
     }
 }
 
@@ -2344,9 +2391,9 @@ fn drawCellProgram(
 
     // Clear the surface
     gl.clearColor(
-        @as(f32, @floatFromInt(self.draw_background.r)) / 255,
-        @as(f32, @floatFromInt(self.draw_background.g)) / 255,
-        @as(f32, @floatFromInt(self.draw_background.b)) / 255,
+        @floatCast(@as(f32, @floatFromInt(self.draw_background.r)) / 255 * self.config.background_opacity),
+        @floatCast(@as(f32, @floatFromInt(self.draw_background.g)) / 255 * self.config.background_opacity),
+        @floatCast(@as(f32, @floatFromInt(self.draw_background.b)) / 255 * self.config.background_opacity),
         @floatCast(self.config.background_opacity),
     );
     gl.clear(gl.c.GL_COLOR_BUFFER_BIT);

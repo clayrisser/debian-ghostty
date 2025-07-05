@@ -382,6 +382,7 @@ fn encodeError(r: *Response, err: EncodeableError) void {
         error.DecompressionFailed => r.message = "EINVAL: decompression failed",
         error.FilePathTooLong => r.message = "EINVAL: file path too long",
         error.TemporaryFileNotInTempDir => r.message = "EINVAL: temporary file not in temp dir",
+        error.TemporaryFileNotNamedCorrectly => r.message = "EINVAL: temporary file not named correctly",
         error.UnsupportedFormat => r.message = "EINVAL: unsupported format",
         error.UnsupportedMedium => r.message = "EINVAL: unsupported medium",
         error.UnsupportedDepth => r.message = "EINVAL: unsupported pixel depth",

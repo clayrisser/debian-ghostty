@@ -159,7 +159,7 @@ typedef enum {
   GHOSTTY_KEY_EQUAL,
   GHOSTTY_KEY_LEFT_BRACKET,   // [
   GHOSTTY_KEY_RIGHT_BRACKET,  // ]
-  GHOSTTY_KEY_BACKSLASH,      // /
+  GHOSTTY_KEY_BACKSLASH,      // \
 
   // control
   GHOSTTY_KEY_UP,
@@ -375,9 +375,9 @@ typedef enum {
 typedef enum {
   GHOSTTY_GOTO_SPLIT_PREVIOUS,
   GHOSTTY_GOTO_SPLIT_NEXT,
-  GHOSTTY_GOTO_SPLIT_TOP,
+  GHOSTTY_GOTO_SPLIT_UP,
   GHOSTTY_GOTO_SPLIT_LEFT,
-  GHOSTTY_GOTO_SPLIT_BOTTOM,
+  GHOSTTY_GOTO_SPLIT_DOWN,
   GHOSTTY_GOTO_SPLIT_RIGHT,
 } ghostty_action_goto_split_e;
 
@@ -559,10 +559,13 @@ typedef struct {
 
 // apprt.Action.Key
 typedef enum {
+  GHOSTTY_ACTION_QUIT,
   GHOSTTY_ACTION_NEW_WINDOW,
   GHOSTTY_ACTION_NEW_TAB,
+  GHOSTTY_ACTION_CLOSE_TAB,
   GHOSTTY_ACTION_NEW_SPLIT,
   GHOSTTY_ACTION_CLOSE_ALL_WINDOWS,
+  GHOSTTY_ACTION_TOGGLE_MAXIMIZE,
   GHOSTTY_ACTION_TOGGLE_FULLSCREEN,
   GHOSTTY_ACTION_TOGGLE_TAB_OVERVIEW,
   GHOSTTY_ACTION_TOGGLE_WINDOW_DECORATIONS,
@@ -641,7 +644,7 @@ typedef void (*ghostty_runtime_write_clipboard_cb)(void*,
                                                    ghostty_clipboard_e,
                                                    bool);
 typedef void (*ghostty_runtime_close_surface_cb)(void*, bool);
-typedef void (*ghostty_runtime_action_cb)(ghostty_app_t,
+typedef bool (*ghostty_runtime_action_cb)(ghostty_app_t,
                                           ghostty_target_s,
                                           ghostty_action_s);
 
@@ -681,10 +684,11 @@ void ghostty_config_open();
 ghostty_app_t ghostty_app_new(const ghostty_runtime_config_s*,
                               ghostty_config_t);
 void ghostty_app_free(ghostty_app_t);
-bool ghostty_app_tick(ghostty_app_t);
+void ghostty_app_tick(ghostty_app_t);
 void* ghostty_app_userdata(ghostty_app_t);
 void ghostty_app_set_focus(ghostty_app_t, bool);
 bool ghostty_app_key(ghostty_app_t, ghostty_input_key_s);
+bool ghostty_app_key_is_binding(ghostty_app_t, ghostty_input_key_s);
 void ghostty_app_keyboard_changed(ghostty_app_t);
 void ghostty_app_open_config(ghostty_app_t);
 void ghostty_app_update_config(ghostty_app_t, ghostty_config_t);
@@ -712,7 +716,8 @@ void ghostty_surface_set_color_scheme(ghostty_surface_t,
                                       ghostty_color_scheme_e);
 ghostty_input_mods_e ghostty_surface_key_translation_mods(ghostty_surface_t,
                                                           ghostty_input_mods_e);
-void ghostty_surface_key(ghostty_surface_t, ghostty_input_key_s);
+bool ghostty_surface_key(ghostty_surface_t, ghostty_input_key_s);
+bool ghostty_surface_key_is_binding(ghostty_surface_t, ghostty_input_key_s);
 void ghostty_surface_text(ghostty_surface_t, const char*, uintptr_t);
 bool ghostty_surface_mouse_captured(ghostty_surface_t);
 bool ghostty_surface_mouse_button(ghostty_surface_t,

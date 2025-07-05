@@ -25,7 +25,7 @@ const DeferredFace = font.DeferredFace;
 const DesiredSize = font.face.DesiredSize;
 const Face = font.Face;
 const Library = font.Library;
-const Metrics = font.face.Metrics;
+const Metrics = font.Metrics;
 const Presentation = font.Presentation;
 const Style = font.Style;
 
@@ -34,6 +34,17 @@ const log = std.log.scoped(.font_collection);
 /// The available faces we have. This shouldn't be modified manually.
 /// Instead, use the functions available on Collection.
 faces: StyleArray,
+
+/// The metric modifiers to use for this collection. The memory
+/// for this is owned by the user and is not freed by the collection.
+///
+/// Call `Collection.updateMetrics` to recompute the
+/// collection's metrics after making changes to these.
+metric_modifiers: Metrics.ModifierSet = .{},
+
+/// Metrics for this collection. Call `Collection.updateMetrics` to (re)compute
+/// these after adding a primary font or making changes to `metric_modifiers`.
+metrics: ?Metrics = null,
 
 /// The load options for deferred faces in the face list. If this
 /// is not set, then deferred faces will not be loaded. Attempting to
@@ -421,6 +432,28 @@ pub fn setSize(self: *Collection, size: DesiredSize) !void {
             .alias => continue,
         };
     }
+
+    try self.updateMetrics();
+}
+
+const UpdateMetricsError = font.Face.GetMetricsError || error{
+    CannotLoadPrimaryFont,
+};
+
+/// Update the cell metrics for this collection, based on
+/// the primary font and the modifiers in `metric_modifiers`.
+///
+/// This requires a primary font (index `0`) to be present.
+pub fn updateMetrics(self: *Collection) UpdateMetricsError!void {
+    const primary_face = self.getFace(.{ .idx = 0 }) catch return error.CannotLoadPrimaryFont;
+
+    const face_metrics = try primary_face.getMetrics();
+
+    var metrics = Metrics.calc(face_metrics);
+
+    metrics.apply(self.metric_modifiers);
+
+    self.metrics = metrics;
 }
 
 /// Packed array of all Style enum cases mapped to a growable list of faces.
@@ -448,10 +481,6 @@ pub const LoadOptions = struct {
     /// The desired font size for all loaded faces.
     size: DesiredSize = .{ .points = 12 },
 
-    /// The metric modifiers to use for all loaded faces. The memory
-    /// for this is owned by the user and is not freed by the collection.
-    metric_modifiers: Metrics.ModifierSet = .{},
-
     /// Freetype Load Flags to use when loading glyphs. This is a list of
     /// bitfield constants that controls operations to perform during glyph
     /// loading. Only a subset is exposed for configuration, for the whole set
@@ -467,7 +496,6 @@ pub const LoadOptions = struct {
     pub fn faceOptions(self: *const LoadOptions) font.face.Options {
         return .{
             .size = self.size,
-            .metric_modifiers = &self.metric_modifiers,
             .freetype_load_flags = self.freetype_load_flags,
         };
     }
@@ -863,4 +891,67 @@ test "hasCodepoint emoji default graphical" {
     try testing.expect(!c.hasCodepoint(idx, 'A', .{ .any = {} }));
     try testing.expect(c.hasCodepoint(idx, '🥸', .{ .any = {} }));
     // TODO(fontmem): test explicit/implicit
+}
+
+test "metrics" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+    const testFont = font.embedded.inconsolata;
+
+    var lib = try Library.init();
+    defer lib.deinit();
+
+    var c = init();
+    defer c.deinit(alloc);
+    c.load_options = .{ .library = lib };
+
+    _ = try c.add(alloc, .regular, .{ .loaded = try Face.init(
+        lib,
+        testFont,
+        .{ .size = .{ .points = 12, .xdpi = 96, .ydpi = 96 } },
+    ) });
+
+    try c.updateMetrics();
+
+    try std.testing.expectEqual(font.Metrics{
+        .cell_width = 8,
+        // The cell height is 17 px because the calculation is
+        //
+        //  ascender - descender + gap
+        //
+        // which, for inconsolata is
+        //
+        //  859 - -190 + 0
+        //
+        // font units, at 1000 units per em that works out to 1.049 em,
+        // and 1em should be the point size * dpi scale, so 12 * (96/72)
+        // which is 16, and 16 * 1.049 = 16.784, which finally is rounded
+        // to 17.
+        .cell_height = 17,
+        .cell_baseline = 3,
+        .underline_position = 17,
+        .underline_thickness = 1,
+        .strikethrough_position = 10,
+        .strikethrough_thickness = 1,
+        .overline_position = 0,
+        .overline_thickness = 1,
+        .box_thickness = 1,
+        .cursor_height = 17,
+    }, c.metrics);
+
+    // Resize should change metrics
+    try c.setSize(.{ .points = 24, .xdpi = 96, .ydpi = 96 });
+    try std.testing.expectEqual(font.Metrics{
+        .cell_width = 16,
+        .cell_height = 34,
+        .cell_baseline = 6,
+        .underline_position = 34,
+        .underline_thickness = 2,
+        .strikethrough_position = 19,
+        .strikethrough_thickness = 2,
+        .overline_position = 0,
+        .overline_thickness = 2,
+        .box_thickness = 2,
+        .cursor_height = 34,
+    }, c.metrics);
 }

@@ -50,7 +50,6 @@ extension Ghostty {
         var body: some View {
             let center = NotificationCenter.default
             let pubZoom = center.publisher(for: Notification.didToggleSplitZoom)
-            let pubEqualize = center.publisher(for: Notification.didEqualizeSplits)
 
             // If we're zoomed, we don't render anything, we are transparent. This
             // ensures that the View stays around so we don't lose our state, but
@@ -76,7 +75,6 @@ extension Ghostty {
                             container: container
                         )
                         .onReceive(pubZoom) { onZoom(notification: $0) }
-                        .onReceive(pubEqualize) { onEqualize(notification: $0) }
                     }
                 }
                 .navigationTitle(surfaceTitle ?? "Ghostty")
@@ -136,11 +134,6 @@ extension Ghostty {
                     }
                 }
             }
-        }
-
-        func onEqualize(notification: SwiftUI.Notification) {
-            guard case .split(let c) = node else { return }
-            _ = c.equalize()
         }
     }
 
@@ -205,6 +198,7 @@ extension Ghostty {
             alert.beginSheetModal(for: window, completionHandler: { response in
                 switch (response) {
                 case .alertFirstButtonReturn:
+                    alert.window.orderOut(nil)
                     node = nil
 
                 default:
@@ -308,7 +302,7 @@ extension Ghostty {
                 resizeIncrements: .init(width: 1, height: 1),
                 resizePublisher: container.resizeEvent,
                 left: {
-                let neighborKey: WritableKeyPath<SplitNode.Neighbors, SplitNode?> = container.direction == .horizontal ? \.right : \.bottom
+                let neighborKey: WritableKeyPath<SplitNode.Neighbors, SplitNode?> = container.direction == .horizontal ? \.right : \.down
 
                 TerminalSplitNested(
                     node: closeableTopLeft(),
@@ -318,7 +312,7 @@ extension Ghostty {
                     ])
                 )
             }, right: {
-                let neighborKey: WritableKeyPath<SplitNode.Neighbors, SplitNode?> = container.direction == .horizontal ? \.left : \.top
+                let neighborKey: WritableKeyPath<SplitNode.Neighbors, SplitNode?> = container.direction == .horizontal ? \.left : \.up
 
                 TerminalSplitNested(
                     node: closeableBottomRight(),

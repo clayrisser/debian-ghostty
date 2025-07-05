@@ -7,6 +7,9 @@ const trace = @import("tracy").trace;
 const font = @import("../main.zig");
 const os = @import("../../os/main.zig");
 const terminal = @import("../../terminal/main.zig");
+const Feature = font.shape.Feature;
+const FeatureList = font.shape.FeatureList;
+const default_features = font.shape.default_features;
 const Face = font.Face;
 const Collection = font.Collection;
 const DeferredFace = font.DeferredFace;
@@ -40,9 +43,10 @@ pub const Shaper = struct {
     /// The string used for shaping the current run.
     run_state: RunState,
 
-    /// The font features we want to use. The hardcoded features are always
-    /// set first.
-    features: FeatureList,
+    /// CoreFoundation Dictionary which represents our font feature settings.
+    features: *macos.foundation.Dictionary,
+    /// A version of the features dictionary with the default features excluded.
+    features_no_default: *macos.foundation.Dictionary,
 
     /// The shared memory used for shaping results.
     cell_buf: CellBuf,
@@ -100,51 +104,17 @@ pub const Shaper = struct {
         }
     };
 
-    /// List of font features, parsed into the data structures used by
-    /// the CoreText API. The CoreText API requires a pretty annoying wrapping
-    /// to setup font features:
-    ///
-    ///   - The key parsed into a CFString
-    ///   - The value parsed into a CFNumber
-    ///   - The key and value are then put into a CFDictionary
-    ///   - The CFDictionary is then put into a CFArray
-    ///   - The CFArray is then put into another CFDictionary
-    ///   - The CFDictionary is then passed to the CoreText API to create
-    ///     a new font with the features set.
-    ///
-    /// This structure handles up to the point that we have a CFArray of
-    /// CFDictionary objects representing the font features and provides
-    /// functions for creating the dictionary to init the font.
-    const FeatureList = struct {
-        list: *macos.foundation.MutableArray,
+    /// Create a CoreFoundation Dictionary suitable for
+    /// settings the font features of a CoreText font.
+    fn makeFeaturesDict(feats: []const Feature) !*macos.foundation.Dictionary {
+        const list = try macos.foundation.MutableArray.create();
+        errdefer list.release();
 
-        pub fn init() !FeatureList {
-            var list = try macos.foundation.MutableArray.create();
-            errdefer list.release();
-            return .{ .list = list };
-        }
-
-        pub fn deinit(self: FeatureList) void {
-            self.list.release();
-        }
-
-        /// Append the given feature to the list. The feature syntax is
-        /// the same as Harfbuzz: "feat" enables it and "-feat" disables it.
-        pub fn append(self: *FeatureList, name_raw: []const u8) !void {
-            // If the name is `-name` then we are disabling the feature,
-            // otherwise we are enabling it, so we need to parse this out.
-            const name = if (name_raw[0] == '-') name_raw[1..] else name_raw;
-            const dict = try featureDict(name, name_raw[0] != '-');
-            defer dict.release();
-            self.list.appendValue(macos.foundation.Dictionary, dict);
-        }
-
-        /// Create the dictionary for the given feature and value.
-        fn featureDict(name: []const u8, v: bool) !*macos.foundation.Dictionary {
-            const value_num: c_int = @intFromBool(v);
+        for (feats) |feat| {
+            const value_num: c_int = @intCast(feat.value);
 
             // Keys can only be ASCII.
-            var key = try macos.foundation.String.createWithBytes(name, .ascii, false);
+            var key = try macos.foundation.String.createWithBytes(&feat.tag, .ascii, false);
             defer key.release();
             var value = try macos.foundation.Number.create(.int, &value_num);
             defer value.release();
@@ -154,50 +124,44 @@ pub const Shaper = struct {
                     macos.text.c.kCTFontOpenTypeFeatureTag,
                     macos.text.c.kCTFontOpenTypeFeatureValue,
                 },
-                &[_]?*const anyopaque{
-                    key,
-                    value,
-                },
+                &[_]?*const anyopaque{ key, value },
             );
-            errdefer dict.release();
-            return dict;
+            defer dict.release();
+
+            list.appendValue(macos.foundation.Dictionary, dict);
         }
 
-        /// Returns the dictionary to use with the font API to set the
-        /// features. This should be released by the caller.
-        pub fn attrsDict(
-            self: FeatureList,
-            omit_defaults: bool,
-        ) !*macos.foundation.Dictionary {
-            // Get our feature list. If we're omitting defaults then we
-            // slice off the hardcoded features.
-            const list = if (!omit_defaults) self.list else list: {
-                const list = try macos.foundation.MutableArray.createCopy(@ptrCast(self.list));
-                for (hardcoded_features) |_| list.removeValue(0);
-                break :list list;
-            };
-            defer if (omit_defaults) list.release();
+        var dict = try macos.foundation.Dictionary.create(
+            &[_]?*const anyopaque{macos.text.c.kCTFontFeatureSettingsAttribute},
+            &[_]?*const anyopaque{list},
+        );
+        errdefer dict.release();
 
-            var dict = try macos.foundation.Dictionary.create(
-                &[_]?*const anyopaque{macos.text.c.kCTFontFeatureSettingsAttribute},
-                &[_]?*const anyopaque{list},
-            );
-            errdefer dict.release();
-            return dict;
-        }
-    };
-
-    // These features are hardcoded to always be on by default. Users
-    // can turn them off by setting the features to "-liga" for example.
-    const hardcoded_features = [_][]const u8{ "dlig", "liga" };
+        return dict;
+    }
 
     /// The cell_buf argument is the buffer to use for storing shaped results.
     /// This should be at least the number of columns in the terminal.
     pub fn init(alloc: Allocator, opts: font.shape.Options) !Shaper {
-        var feats = try FeatureList.init();
-        errdefer feats.deinit();
-        for (hardcoded_features) |name| try feats.append(name);
-        for (opts.features) |name| try feats.append(name);
+        var feature_list: FeatureList = .{};
+        defer feature_list.deinit(alloc);
+        for (opts.features) |feature_str| {
+            try feature_list.appendFromString(alloc, feature_str);
+        }
+
+        // We need to construct two attrs dictionaries for font features;
+        // one without the default features included, and one with them.
+        const feats = feature_list.features.items;
+        const feats_df = try alloc.alloc(Feature, feats.len + default_features.len);
+        defer alloc.free(feats_df);
+
+        @memcpy(feats_df[0..default_features.len], &default_features);
+        @memcpy(feats_df[default_features.len..], feats);
+
+        const features = try makeFeaturesDict(feats_df);
+        errdefer features.release();
+        const features_no_default = try makeFeaturesDict(feats);
+        errdefer features_no_default.release();
 
         var run_state = RunState.init();
         errdefer run_state.deinit(alloc);
@@ -242,7 +206,8 @@ pub const Shaper = struct {
             .alloc = alloc,
             .cell_buf = .{},
             .run_state = run_state,
-            .features = feats,
+            .features = features,
+            .features_no_default = features_no_default,
             .writing_direction = writing_direction,
             .cached_fonts = .{},
             .cached_font_grid = 0,
@@ -255,7 +220,8 @@ pub const Shaper = struct {
     pub fn deinit(self: *Shaper) void {
         self.cell_buf.deinit(self.alloc);
         self.run_state.deinit(self.alloc);
-        self.features.deinit();
+        self.features.release();
+        self.features_no_default.release();
         self.writing_direction.release();
 
         {
@@ -509,8 +475,8 @@ pub const Shaper = struct {
         // If we have it, return the cached attr dict.
         if (self.cached_fonts.items[index_int]) |cached| return cached;
 
-        // Features dictionary, font descriptor, font
-        try self.cf_release_pool.ensureUnusedCapacity(self.alloc, 3);
+        // Font descriptor, font
+        try self.cf_release_pool.ensureUnusedCapacity(self.alloc, 2);
 
         const run_font = font: {
             // The CoreText shaper relies on CoreText and CoreText claims
@@ -533,8 +499,10 @@ pub const Shaper = struct {
             const face = try grid.resolver.collection.getFace(index);
             const original = face.font;
 
-            const attrs = try self.features.attrsDict(face.quirks_disable_default_font_features);
-            self.cf_release_pool.appendAssumeCapacity(attrs);
+            const attrs = if (face.quirks_disable_default_font_features)
+                self.features_no_default
+            else
+                self.features;
 
             const desc = try macos.text.FontDescriptor.createWithAttributes(attrs);
             self.cf_release_pool.appendAssumeCapacity(desc);

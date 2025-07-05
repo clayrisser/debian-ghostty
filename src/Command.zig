@@ -18,6 +18,7 @@ const Command = @This();
 
 const std = @import("std");
 const builtin = @import("builtin");
+const global_state = &@import("global.zig").state;
 const internal_os = @import("os/main.zig");
 const windows = internal_os.windows;
 const TempDir = internal_os.TempDir;
@@ -174,6 +175,10 @@ fn startPosix(self: *Command, arena: Allocator) !void {
         // crash the entire process if this fails so we ignore it.
         // We don't log because that'll show up in the output.
     };
+
+    // Restore any rlimits that were set by Ghostty. This might fail but
+    // any failures are ignored (its best effort).
+    global_state.rlimits.restore();
 
     // If the user requested a pre exec callback, call it now.
     if (self.pre_exec) |f| f(self);
@@ -587,8 +592,8 @@ test "createNullDelimitedEnvMap" {
 test "Command: pre exec" {
     if (builtin.os.tag == .windows) return error.SkipZigTest;
     var cmd: Command = .{
-        .path = "/usr/bin/env",
-        .args = &.{ "/usr/bin/env", "-v" },
+        .path = "/bin/sh",
+        .args = &.{ "/bin/sh", "-v" },
         .pre_exec = (struct {
             fn do(_: *Command) void {
                 // This runs in the child, so we can exit and it won't
@@ -598,7 +603,7 @@ test "Command: pre exec" {
         }).do,
     };
 
-    try cmd.start(testing.allocator);
+    try cmd.testingStart();
     try testing.expect(cmd.pid != null);
     const exit = try cmd.wait(true);
     try testing.expect(exit == .Exited);
@@ -629,12 +634,12 @@ test "Command: redirect stdout to file" {
         .args = &.{"C:\\Windows\\System32\\whoami.exe"},
         .stdout = stdout,
     } else .{
-        .path = "/usr/bin/env",
-        .args = &.{ "/usr/bin/env", "-v" },
+        .path = "/bin/sh",
+        .args = &.{ "/bin/sh", "-c", "echo hello" },
         .stdout = stdout,
     };
 
-    try cmd.start(testing.allocator);
+    try cmd.testingStart();
     try testing.expect(cmd.pid != null);
     const exit = try cmd.wait(true);
     try testing.expect(exit == .Exited);
@@ -663,13 +668,13 @@ test "Command: custom env vars" {
         .stdout = stdout,
         .env = &env,
     } else .{
-        .path = "/usr/bin/env",
-        .args = &.{ "/usr/bin/env", "sh", "-c", "echo $VALUE" },
+        .path = "/bin/sh",
+        .args = &.{ "/bin/sh", "-c", "echo $VALUE" },
         .stdout = stdout,
         .env = &env,
     };
 
-    try cmd.start(testing.allocator);
+    try cmd.testingStart();
     try testing.expect(cmd.pid != null);
     const exit = try cmd.wait(true);
     try testing.expect(exit == .Exited);
@@ -699,13 +704,13 @@ test "Command: custom working directory" {
         .stdout = stdout,
         .cwd = "C:\\Windows\\System32",
     } else .{
-        .path = "/usr/bin/env",
-        .args = &.{ "/usr/bin/env", "sh", "-c", "pwd" },
+        .path = "/bin/sh",
+        .args = &.{ "/bin/sh", "-c", "pwd" },
         .stdout = stdout,
-        .cwd = "/usr/bin",
+        .cwd = "/tmp",
     };
 
-    try cmd.start(testing.allocator);
+    try cmd.testingStart();
     try testing.expect(cmd.pid != null);
     const exit = try cmd.wait(true);
     try testing.expect(exit == .Exited);
@@ -718,7 +723,51 @@ test "Command: custom working directory" {
 
     if (builtin.os.tag == .windows) {
         try testing.expectEqualStrings("C:\\Windows\\System32\r\n", contents);
+    } else if (builtin.os.tag == .macos) {
+        try testing.expectEqualStrings("/private/tmp\n", contents);
     } else {
-        try testing.expectEqualStrings("/usr/bin\n", contents);
+        try testing.expectEqualStrings("/tmp\n", contents);
     }
+}
+
+// Test validate an execveZ failure correctly terminates when error.ExecFailedInChild is correctly handled
+//
+// Incorrectly handling an error.ExecFailedInChild results in a second copy of the test process running.
+// Duplicating the test process leads to weird behavior
+// zig build test will hang
+// test binary created via -Demit-test-exe will run 2 copies of the test suite
+test "Command: posix fork handles execveZ failure" {
+    if (builtin.os.tag == .windows) {
+        return error.SkipZigTest;
+    }
+    var td = try TempDir.init();
+    defer td.deinit();
+    var stdout = try createTestStdout(td.dir);
+    defer stdout.close();
+
+    var cmd: Command = .{
+        .path = "/not/a/binary",
+        .args = &.{ "/not/a/binary", "" },
+        .stdout = stdout,
+        .cwd = "/bin",
+    };
+
+    try cmd.testingStart();
+    try testing.expect(cmd.pid != null);
+    const exit = try cmd.wait(true);
+    try testing.expect(exit == .Exited);
+    try testing.expect(exit.Exited == 1);
+}
+
+// If cmd.start fails with error.ExecFailedInChild it's the _child_ process that is running. If it does not
+// terminate in response to that error both the parent and child will continue as if they _are_ the test suite
+// process.
+fn testingStart(self: *Command) !void {
+    self.start(testing.allocator) catch |err| {
+        if (err == error.ExecFailedInChild) {
+            // I am a child process, I must not get confused and continue running the rest of the test suite.
+            posix.exit(1);
+        }
+        return err;
+    };
 }

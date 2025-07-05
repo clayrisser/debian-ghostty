@@ -36,6 +36,11 @@ pub const Flags = packed struct {
     /// and not just while Ghostty is focused. This may not work on all platforms.
     /// See the keybind config documentation for more information.
     global: bool = false,
+
+    /// True if this binding should only be triggered if the action can be
+    /// performed. If the action can't be performed then the binding acts as
+    /// if it doesn't exist.
+    performable: bool = false,
 };
 
 /// Full binding parser. The binding parser is implemented as an iterator
@@ -90,6 +95,9 @@ pub const Parser = struct {
             } else if (std.mem.eql(u8, prefix, "unconsumed")) {
                 if (!flags.consumed) return Error.InvalidFormat;
                 flags.consumed = false;
+            } else if (std.mem.eql(u8, prefix, "performable")) {
+                if (flags.performable) return Error.InvalidFormat;
+                flags.performable = true;
             } else {
                 // If we don't recognize the prefix then we're done.
                 // There are trigger-specific prefixes like "physical:" so
@@ -185,10 +193,29 @@ pub fn lessThan(_: void, lhs: Binding, rhs: Binding) bool {
         if (rhs.trigger.mods.alt) count += 1;
         break :blk count;
     };
-    if (lhs_count == rhs_count)
+
+    if (lhs_count != rhs_count)
+        return lhs_count > rhs_count;
+
+    if (lhs.trigger.mods.int() != rhs.trigger.mods.int())
         return lhs.trigger.mods.int() > rhs.trigger.mods.int();
 
-    return lhs_count > rhs_count;
+    const lhs_key: c_int = blk: {
+        switch (lhs.trigger.key) {
+            .translated => break :blk @intFromEnum(lhs.trigger.key.translated),
+            .physical => break :blk @intFromEnum(lhs.trigger.key.physical),
+            .unicode => break :blk @intCast(lhs.trigger.key.unicode),
+        }
+    };
+    const rhs_key: c_int = blk: {
+        switch (rhs.trigger.key) {
+            .translated => break :blk @intFromEnum(rhs.trigger.key.translated),
+            .physical => break :blk @intFromEnum(rhs.trigger.key.physical),
+            .unicode => break :blk @intCast(rhs.trigger.key.unicode),
+        }
+    };
+
+    return lhs_key < rhs_key;
 }
 
 /// The set of actions that a keybinding can take.
@@ -203,15 +230,15 @@ pub const Action = union(enum) {
     unbind: void,
 
     /// Send a CSI sequence. The value should be the CSI sequence without the
-    /// CSI header (`ESC ]` or `\x1b]`).
+    /// CSI header (`ESC [` or `\x1b[`).
     csi: []const u8,
 
     /// Send an `ESC` sequence.
     esc: []const u8,
 
-    // Send the given text. Uses Zig string literal syntax. This is currently
-    // not validated. If the text is invalid (i.e. contains an invalid escape
-    // sequence), the error will currently only show up in logs.
+    /// Send the given text. Uses Zig string literal syntax. This is currently
+    /// not validated. If the text is invalid (i.e. contains an invalid escape
+    /// sequence), the error will currently only show up in logs.
     text: []const u8,
 
     /// Send data to the pty depending on whether cursor key mode is enabled
@@ -231,6 +258,10 @@ pub const Action = union(enum) {
     copy_to_clipboard: void,
     paste_from_clipboard: void,
     paste_from_selection: void,
+
+    /// Copy the URL under the cursor to the clipboard. If there is no
+    /// URL under the cursor, this does nothing.
+    copy_url_to_clipboard: void,
 
     /// Increase/decrease the font size by a certain amount.
     increase_font_size: f32,
@@ -253,8 +284,15 @@ pub const Action = union(enum) {
     scroll_page_fractional: f32,
     scroll_page_lines: i16,
 
-    /// Adjust an existing selection in a given direction. This action
-    /// does nothing if there is no active selection.
+    /// Adjust the current selection in a given direction. Does nothing if no
+    /// selection exists.
+    ///
+    /// Arguments:
+    ///   - left, right, up, down, page_up, page_down, home, end,
+    ///     beginning_of_line, end_of_line
+    ///
+    /// Example: Extend selection to the right
+    ///   keybind = shift+right=adjust_selection:right
     adjust_selection: AdjustSelection,
 
     /// Jump the viewport forward or back by prompt. Positive number is the
@@ -302,7 +340,7 @@ pub const Action = union(enum) {
     goto_tab: usize,
 
     /// Moves a tab by a relative offset.
-    /// Adjusts the tab position based on `offset` (e.g., -1 for left, +1 for right).
+    /// Adjusts the tab position based on `offset`. For example `move_tab:-1` for left, `move_tab:1` for right.
     /// If the new position is out of bounds, it wraps around cyclically within the tab range.
     move_tab: isize,
 
@@ -310,25 +348,42 @@ pub const Action = union(enum) {
     /// This only works with libadwaita enabled currently.
     toggle_tab_overview: void,
 
-    /// Create a new split in the given direction. The new split will appear in
-    /// the direction given.
+    /// Create a new split in the given direction.
+    ///
+    /// Arguments:
+    ///   - right, down, left, up, auto (splits along the larger direction)
+    ///
+    /// Example: Create split on the right
+    ///   keybind = cmd+shift+d=new_split:right
     new_split: SplitDirection,
 
-    /// Focus on a split in a given direction.
+    /// Focus on a split in a given direction. For example `goto_split:up`.
+    /// Valid values are left, right, up, down, previous and next.
     goto_split: SplitFocusDirection,
 
     /// zoom/unzoom the current split.
     toggle_split_zoom: void,
 
-    /// Resize the current split by moving the split divider in the given
-    /// direction
+    /// Resize the current split in a given direction.
+    ///
+    /// Arguments:
+    ///   - up, down, left, right
+    ///   - the number of pixels to resize the split by
+    ///
+    /// Example: Move divider up 10 pixels
+    ///   keybind = cmd+shift+up=resize_split:up,10
     resize_split: SplitResizeParameter,
 
     /// Equalize all splits in the current window
     equalize_splits: void,
 
-    /// Show, hide, or toggle the terminal inspector for the currently focused
-    /// terminal.
+    /// Control the terminal inspector visibility.
+    ///
+    /// Arguments:
+    ///   - toggle, show, hide
+    ///
+    /// Example: Toggle inspector visibility
+    ///   keybind = cmd+i=inspector:toggle
     inspector: InspectorMode,
 
     /// Open the configuration file in the default OS editor. If your default OS
@@ -347,6 +402,10 @@ pub const Action = union(enum) {
     /// configured.
     close_surface: void,
 
+    /// Close the current tab, regardless of how many splits there may be.
+    /// This will trigger close confirmation as configured.
+    close_tab: void,
+
     /// Close the window, regardless of how many tabs or splits there may be.
     /// This will trigger close confirmation as configured.
     close_window: void,
@@ -354,6 +413,9 @@ pub const Action = union(enum) {
     /// Close all windows. This will trigger close confirmation as configured.
     /// This only works for macOS currently.
     close_all_windows: void,
+
+    /// Toggle maximized window state. This only works on Linux.
+    toggle_maximize: void,
 
     /// Toggle fullscreen mode of window.
     toggle_fullscreen: void,
@@ -380,10 +442,17 @@ pub const Action = union(enum) {
     /// is preserved between appearances, so you can always press the keybinding
     /// to bring it back up.
     ///
+    /// To enable the quick terminal globally so that Ghostty doesn't
+    /// have to be focused, prefix your keybind with `global`. Example:
+    ///
+    /// ```ini
+    /// keybind = global:cmd+grave_accent=toggle_quick_terminal
+    /// ```
+    ///
     /// The quick terminal has some limitations:
     ///
     ///   - It is a singleton; only one instance can exist at a time.
-    ///   - It does not support tabs.
+    ///   - It does not support tabs, but it does support splits.
     ///   - It will not be restored when the application is restarted
     ///     (for systems that support window restoration).
     ///   - It supports fullscreen, but fullscreen will always be a non-native
@@ -393,13 +462,17 @@ pub const Action = union(enum) {
     ///
     /// See the various configurations for the quick terminal in the
     /// configuration file to customize its behavior.
+    ///
+    /// This currently only works on macOS.
     toggle_quick_terminal: void,
 
     /// Show/hide all windows. If all windows become shown, we also ensure
-    /// Ghostty is focused.
+    /// Ghostty becomes focused. When hiding all windows, focus is yielded
+    /// to the next application as determined by the OS.
     ///
-    /// This currently only works on macOS. When hiding all windows, we do
-    /// not yield focus to the previous application.
+    /// Note: When the focused surface is fullscreen, this method does nothing.
+    ///
+    /// This currently only works on macOS.
     toggle_visibility: void,
 
     /// Quit ghostty.
@@ -468,11 +541,42 @@ pub const Action = union(enum) {
     pub const SplitFocusDirection = enum {
         previous,
         next,
-
-        top,
+        up,
         left,
-        bottom,
+        down,
         right,
+
+        pub fn parse(input: []const u8) !SplitFocusDirection {
+            return std.meta.stringToEnum(SplitFocusDirection, input) orelse {
+                // For backwards compatibility we map "top" and "bottom" onto the enum
+                // values "up" and "down"
+                if (std.mem.eql(u8, input, "top")) {
+                    return .up;
+                } else if (std.mem.eql(u8, input, "bottom")) {
+                    return .down;
+                } else {
+                    return Error.InvalidFormat;
+                }
+            };
+        }
+
+        test "parse" {
+            const testing = std.testing;
+
+            try testing.expectEqual(.previous, try SplitFocusDirection.parse("previous"));
+            try testing.expectEqual(.next, try SplitFocusDirection.parse("next"));
+
+            try testing.expectEqual(.up, try SplitFocusDirection.parse("up"));
+            try testing.expectEqual(.left, try SplitFocusDirection.parse("left"));
+            try testing.expectEqual(.down, try SplitFocusDirection.parse("down"));
+            try testing.expectEqual(.right, try SplitFocusDirection.parse("right"));
+
+            try testing.expectEqual(.up, try SplitFocusDirection.parse("top"));
+            try testing.expectEqual(.down, try SplitFocusDirection.parse("bottom"));
+
+            try testing.expectError(error.InvalidFormat, SplitFocusDirection.parse(""));
+            try testing.expectError(error.InvalidFormat, SplitFocusDirection.parse("green"));
+        }
     };
 
     pub const SplitResizeDirection = enum {
@@ -515,7 +619,16 @@ pub const Action = union(enum) {
         comptime field: std.builtin.Type.UnionField,
         param: []const u8,
     ) !field.type {
-        return switch (@typeInfo(field.type)) {
+        const field_info = @typeInfo(field.type);
+
+        // Fields can provide a custom "parse" function
+        if (field_info == .Struct or field_info == .Union or field_info == .Enum) {
+            if (@hasDecl(field.type, "parse") and @typeInfo(@TypeOf(field.type.parse)) == .Fn) {
+                return field.type.parse(param);
+            }
+        }
+
+        return switch (field_info) {
             .Enum => try parseEnum(field.type, param),
             .Int => try parseInt(field.type, param),
             .Float => try parseFloat(field.type, param),
@@ -629,6 +742,7 @@ pub const Action = union(enum) {
             .cursor_key,
             .reset,
             .copy_to_clipboard,
+            .copy_url_to_clipboard,
             .paste_from_clipboard,
             .paste_from_selection,
             .increase_font_size,
@@ -648,7 +762,9 @@ pub const Action = union(enum) {
             .write_screen_file,
             .write_selection_file,
             .close_surface,
+            .close_tab,
             .close_window,
+            .toggle_maximize,
             .toggle_fullscreen,
             .toggle_window_decorations,
             .toggle_secure_input,
@@ -1010,6 +1126,14 @@ pub const Trigger = struct {
                 const cp = it.nextCodepoint() orelse break :unicode;
                 if (it.nextCodepoint() != null) break :unicode;
 
+                // If this is ASCII and we have a translated key, set that.
+                if (std.math.cast(u8, cp)) |ascii| {
+                    if (key.Key.fromASCII(ascii)) |k| {
+                        result.key = .{ .translated = k };
+                        continue :loop;
+                    }
+                }
+
                 result.key = .{ .unicode = cp };
                 continue :loop;
             }
@@ -1108,6 +1232,13 @@ pub const Set = struct {
     /// This is a conscious decision since the primary use case of the reverse
     /// map is to support GUI toolkit keyboard accelerators and no mainstream
     /// GUI toolkit supports sequences.
+    ///
+    /// Performable triggers are also not present in the reverse map. This
+    /// is so that GUI toolkits don't register performable triggers as
+    /// menu shortcuts (the primary use case of the reverse map). GUI toolkits
+    /// such as GTK handle menu shortcuts too early in the event lifecycle
+    /// for performable to work so this is a conscious decision to ease the
+    /// integration with GUI toolkits.
     reverse: ReverseMap = .{},
 
     /// The entry type for the forward mapping of trigger to action.
@@ -1372,6 +1503,11 @@ pub const Set = struct {
         // unbind should never go into the set, it should be handled prior
         assert(action != .unbind);
 
+        // This is true if we're going to track this entry as
+        // a reverse mapping. There are certain scenarios we don't.
+        // See the reverse map docs for more information.
+        const track_reverse: bool = !flags.performable;
+
         const gop = try self.bindings.getOrPut(alloc, t);
 
         if (gop.found_existing) switch (gop.value_ptr.*) {
@@ -1383,7 +1519,7 @@ pub const Set = struct {
 
             // If we have an existing binding for this trigger, we have to
             // update the reverse mapping to remove the old action.
-            .leaf => {
+            .leaf => if (track_reverse) {
                 const t_hash = t.hash();
                 var it = self.reverse.iterator();
                 while (it.next()) |reverse_entry| it: {
@@ -1400,8 +1536,9 @@ pub const Set = struct {
             .flags = flags,
         } };
         errdefer _ = self.bindings.remove(t);
-        try self.reverse.put(alloc, action, t);
-        errdefer _ = self.reverse.remove(action);
+
+        if (track_reverse) try self.reverse.put(alloc, action, t);
+        errdefer if (track_reverse) self.reverse.remove(action);
     }
 
     /// Get a binding for a given trigger.
@@ -1442,6 +1579,22 @@ pub const Set = struct {
 
     /// Remove a binding for a given trigger.
     pub fn remove(self: *Set, alloc: Allocator, t: Trigger) void {
+        // Remove whatever this trigger is
+        self.removeExact(alloc, t);
+
+        // If we have a physical we remove translated and vice versa.
+        const alternate: Trigger.Key = switch (t.key) {
+            .unicode => return,
+            .translated => |k| .{ .physical = k },
+            .physical => |k| .{ .translated = k },
+        };
+
+        var alt_t: Trigger = t;
+        alt_t.key = alternate;
+        self.removeExact(alloc, alt_t);
+    }
+
+    fn removeExact(self: *Set, alloc: Allocator, t: Trigger) void {
         const entry = self.bindings.get(t) orelse return;
         _ = self.bindings.remove(t);
 
@@ -1473,7 +1626,7 @@ pub const Set = struct {
                         },
                     }
                 } else {
-                    // No over trigger points to this action so we remove
+                    // No other trigger points to this action so we remove
                     // the reverse mapping completely.
                     _ = self.reverse.remove(leaf.action);
                 }
@@ -1544,6 +1697,19 @@ test "parse: triggers" {
         },
         try parseSingle("a=ignore"),
     );
+
+    // unicode keys that map to translated
+    try testing.expectEqual(Binding{
+        .trigger = .{ .key = .{ .translated = .one } },
+        .action = .{ .ignore = {} },
+    }, try parseSingle("1=ignore"));
+    try testing.expectEqual(Binding{
+        .trigger = .{
+            .mods = .{ .super = true },
+            .key = .{ .translated = .period },
+        },
+        .action = .{ .ignore = {} },
+    }, try parseSingle("cmd+.=ignore"));
 
     // single modifier
     try testing.expectEqual(Binding{
@@ -1616,6 +1782,16 @@ test "parse: triggers" {
         .action = .{ .ignore = {} },
         .flags = .{ .consumed = false },
     }, try parseSingle("unconsumed:physical:a+shift=ignore"));
+
+    // performable keys
+    try testing.expectEqual(Binding{
+        .trigger = .{
+            .mods = .{ .shift = true },
+            .key = .{ .translated = .a },
+        },
+        .action = .{ .ignore = {} },
+        .flags = .{ .performable = true },
+    }, try parseSingle("performable:shift+a=ignore"));
 
     // invalid key
     try testing.expectError(Error.InvalidFormat, parseSingle("foo=ignore"));
@@ -1992,6 +2168,24 @@ test "set: parseAndPut removed binding" {
     try testing.expect(s.getTrigger(.{ .new_window = {} }) == null);
 }
 
+test "set: parseAndPut removed physical binding" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+
+    var s: Set = .{};
+    defer s.deinit(alloc);
+
+    try s.parseAndPut(alloc, "physical:a=new_window");
+    try s.parseAndPut(alloc, "a=unbind");
+
+    // Creates forward mapping
+    {
+        const trigger: Trigger = .{ .key = .{ .physical = .a } };
+        try testing.expect(s.get(trigger) == null);
+    }
+    try testing.expect(s.getTrigger(.{ .new_window = {} }) == null);
+}
+
 test "set: parseAndPut sequence" {
     const testing = std.testing;
     const alloc = testing.allocator;
@@ -2187,6 +2381,39 @@ test "set: maintains reverse mapping" {
     }
 
     // removal should replace
+    s.remove(alloc, .{ .key = .{ .translated = .b } });
+    {
+        const trigger = s.getTrigger(.{ .new_window = {} }).?;
+        try testing.expect(trigger.key.translated == .a);
+    }
+}
+
+test "set: performable is not part of reverse mappings" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+
+    var s: Set = .{};
+    defer s.deinit(alloc);
+
+    try s.put(alloc, .{ .key = .{ .translated = .a } }, .{ .new_window = {} });
+    {
+        const trigger = s.getTrigger(.{ .new_window = {} }).?;
+        try testing.expect(trigger.key.translated == .a);
+    }
+
+    // trigger should be non-performable
+    try s.putFlags(
+        alloc,
+        .{ .key = .{ .translated = .b } },
+        .{ .new_window = {} },
+        .{ .performable = true },
+    );
+    {
+        const trigger = s.getTrigger(.{ .new_window = {} }).?;
+        try testing.expect(trigger.key.translated == .a);
+    }
+
+    // removal of performable should do nothing
     s.remove(alloc, .{ .key = .{ .translated = .b } });
     {
         const trigger = s.getTrigger(.{ .new_window = {} }).?;

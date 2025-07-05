@@ -29,7 +29,7 @@ const Collection = font.Collection;
 const Face = font.Face;
 const Glyph = font.Glyph;
 const Library = font.Library;
-const Metrics = font.face.Metrics;
+const Metrics = font.Metrics;
 const Presentation = font.Presentation;
 const Style = font.Style;
 const RenderOptions = font.face.RenderOptions;
@@ -111,15 +111,10 @@ pub fn deinit(self: *SharedGrid, alloc: Allocator) void {
 }
 
 fn reloadMetrics(self: *SharedGrid) !void {
-    // Get our cell metrics based on a regular font ascii 'M'. Why 'M'?
-    // Doesn't matter, any normal ASCII will do we're just trying to make
-    // sure we use the regular font.
-    // We don't go through our caching layer because we want to minimize
-    // possible failures.
     const collection = &self.resolver.collection;
-    const index = collection.getIndex('M', .regular, .{ .any = {} }).?;
-    const face = try collection.getFace(index);
-    self.metrics = face.metrics;
+    try collection.updateMetrics();
+
+    self.metrics = collection.metrics.?;
 
     // Setup our sprite font.
     self.resolver.sprite = .{ .metrics = self.metrics };
