@@ -91,7 +91,7 @@ build:
     - for f in $(osc status | sed 's|[^ ]*  *||g'); do (osc revert "$f" || true); done
     - osc up
     - for f in $(osc status | sed 's|[^ ]*  *||g'); do (rm -rf "$f" || true); done
-    - osc rm ./* || true
+    # - osc rm ./* || true
     - mv "../../"${PACKAGE_NAME}_* ./
     - osc add ./*
     - osc commit -m "added $PACKAGE_NAME $PACKAGE_VERSION files"
