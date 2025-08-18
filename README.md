@@ -68,14 +68,14 @@ sudo apt install ghostty
 
 ```sh
 ARCH="$(dpkg --print-architecture)"
-curl -LO https://download.opensuse.org/repositories/home:/clayrisser:/sid/Debian_Unstable/$ARCH/ghostty_1.1.3-2_$ARCH.deb
-sudo apt install ./ghostty_1.1.3-2_$ARCH.deb
+curl -LO https://download.opensuse.org/repositories/home:/clayrisser:/sid/Debian_Unstable/$ARCH/ghostty_1.1.3-3_$ARCH.deb
+sudo apt install ./ghostty_1.1.3-3_$ARCH.deb
 ```
 
 ## Downloads
 
 - Debian 12 (Bookworm): [ghostty_1.1.3-1_amd64.deb](https://download.opensuse.org/repositories/home:/clayrisser:/bookworm/Debian_12/amd64/ghostty_1.1.3-1_amd64.deb)
-- Debian Sid (Unstable): [ghostty_1.1.3-2_amd64.deb](https://download.opensuse.org/repositories/home:/clayrisser:/sid/Debian_Unstable/amd64/ghostty_1.1.3-2_amd64.deb), [ghostty_1.1.3-2_arm64.deb](https://download.opensuse.org/repositories/home:/clayrisser:/sid/Debian_Unstable/arm64/ghostty_1.1.3-2_arm64.deb)
+- Debian Sid (Unstable): [ghostty_1.1.3-3_amd64.deb](https://download.opensuse.org/repositories/home:/clayrisser:/sid/Debian_Unstable/amd64/ghostty_1.1.3-3_amd64.deb), [ghostty_1.1.3-3_arm64.deb](https://download.opensuse.org/repositories/home:/clayrisser:/sid/Debian_Unstable/arm64/ghostty_1.1.3-3_arm64.deb)
 
 ## Builds
 
