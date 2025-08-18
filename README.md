@@ -58,8 +58,14 @@ sudo apt install ./ghostty_1.1.3-1_$ARCH.deb
 **repository installation**
 
 ```sh
-echo 'deb http://download.opensuse.org/repositories/home:/clayrisser:/sid/Debian_Unstable/ /' | sudo tee /etc/apt/sources.list.d/home:clayrisser:sid.list
-curl -fsSL https://download.opensuse.org/repositories/home:clayrisser:sid/Debian_Unstable/Release.key | gpg --dearmor | sudo tee /etc/apt/trusted.gpg.d/home_clayrisser_sid.gpg > /dev/null
+curl -fsSL https://download.opensuse.org/repositories/home:clayrisser:sid/Debian_Unstable/Release.key | gpg --dearmor | sudo tee /etc/apt/keyrings/home_clayrisser_sid.gpg > /dev/null
+sudo tee /etc/apt/sources.list.d/home:clayrisser:sid.sources > /dev/null <<EOF
+Types: deb
+URIs: http://download.opensuse.org/repositories/home:/clayrisser:/sid/Debian_Unstable/
+Suites: /
+Components: main
+Signed-By: /etc/apt/keyrings/home_clayrisser_sid.gpg
+EOF
 sudo apt update
 sudo apt install ghostty
 ```
