@@ -39,8 +39,15 @@ This repository contains Debian packaging for Ghostty.
 **repository installation**
 
 ```sh
-echo 'deb http://download.opensuse.org/repositories/home:/clayrisser:/bookworm/Debian_12/ /' | sudo tee /etc/apt/sources.list.d/home:clayrisser:bookworm.list
-curl -fsSL https://download.opensuse.org/repositories/home:clayrisser:bookworm/Debian_12/Release.key | gpg --dearmor | sudo tee /etc/apt/trusted.gpg.d/home_clayrisser_bookworm.gpg > /dev/null
+curl -fsSL https://download.opensuse.org/repositories/home:clayrisser:bookworm/Debian_12/Release.key | gpg --dearmor | sudo tee /etc/apt/keyrings/home_clayrisser_bookworm.gpg > /dev/null
+ARCH="$(dpkg --print-architecture)"
+sudo tee /etc/apt/sources.list.d/home:clayrisser:bookworm.sources > /dev/null <<EOF
+Types: deb
+URIs: http://download.opensuse.org/repositories/home:/clayrisser:/bookworm/Debian_12/
+Suites: /
+Architectures: $ARCH
+Signed-By: /etc/apt/keyrings/home_clayrisser_bookworm.gpg
+EOF
 sudo apt update
 sudo apt install ghostty
 ```
@@ -59,11 +66,12 @@ sudo apt install ./ghostty_1.1.3-1_$ARCH.deb
 
 ```sh
 curl -fsSL https://download.opensuse.org/repositories/home:clayrisser:sid/Debian_Unstable/Release.key | gpg --dearmor | sudo tee /etc/apt/keyrings/home_clayrisser_sid.gpg > /dev/null
+ARCH="$(dpkg --print-architecture)"
 sudo tee /etc/apt/sources.list.d/home:clayrisser:sid.sources > /dev/null <<EOF
 Types: deb
 URIs: http://download.opensuse.org/repositories/home:/clayrisser:/sid/Debian_Unstable/
 Suites: /
-Components: main
+Architectures: $ARCH
 Signed-By: /etc/apt/keyrings/home_clayrisser_sid.gpg
 EOF
 sudo apt update
@@ -82,6 +90,17 @@ sudo apt install ./ghostty_1.1.3-3_$ARCH.deb
 
 - Debian 12 (Bookworm): [ghostty_1.1.3-1_amd64.deb](https://download.opensuse.org/repositories/home:/clayrisser:/bookworm/Debian_12/amd64/ghostty_1.1.3-1_amd64.deb)
 - Debian Sid (Unstable): [ghostty_1.1.3-3_amd64.deb](https://download.opensuse.org/repositories/home:/clayrisser:/sid/Debian_Unstable/amd64/ghostty_1.1.3-3_amd64.deb), [ghostty_1.1.3-3_arm64.deb](https://download.opensuse.org/repositories/home:/clayrisser:/sid/Debian_Unstable/arm64/ghostty_1.1.3-3_arm64.deb)
+
+## Troubleshooting
+
+### APT Sources Error
+
+If you get an error like:
+```
+Error: Malformed entry 1 in sources file /etc/apt/sources.list.d/home:clayrisser:sid.sources (absolute Suite Component)
+```
+
+This is because OBS repositories use a flat structure and don't need the `Components:` field. Make sure your sources file doesn't contain `Components: main`.
 
 ## Builds
 
