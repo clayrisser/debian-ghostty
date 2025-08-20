@@ -39,15 +39,8 @@ This repository contains Debian packaging for Ghostty.
 **repository installation**
 
 ```sh
-curl -fsSL https://download.opensuse.org/repositories/home:clayrisser:bookworm/Debian_12/Release.key | gpg --dearmor | sudo tee /etc/apt/keyrings/home_clayrisser_bookworm.gpg > /dev/null
-ARCH="$(dpkg --print-architecture)"
-sudo tee /etc/apt/sources.list.d/home:clayrisser:bookworm.sources > /dev/null <<EOF
-Types: deb
-URIs: http://download.opensuse.org/repositories/home:/clayrisser:/bookworm/Debian_12/
-Suites: /
-Architectures: $ARCH
-Signed-By: /etc/apt/keyrings/home_clayrisser_bookworm.gpg
-EOF
+echo 'deb http://download.opensuse.org/repositories/home:/clayrisser:/bookworm/Debian_12/ /' | sudo tee /etc/apt/sources.list.d/home:clayrisser:bookworm.list
+curl -fsSL https://download.opensuse.org/repositories/home:clayrisser:bookworm/Debian_12/Release.key | gpg --dearmor | sudo tee /etc/apt/trusted.gpg.d/home_clayrisser_bookworm.gpg > /dev/null
 sudo apt update
 sudo apt install ghostty
 ```
