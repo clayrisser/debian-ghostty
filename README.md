@@ -84,17 +84,6 @@ sudo apt install ./ghostty_1.1.3-3_$ARCH.deb
 - Debian 12 (Bookworm): [ghostty_1.1.3-1_amd64.deb](https://download.opensuse.org/repositories/home:/clayrisser:/bookworm/Debian_12/amd64/ghostty_1.1.3-1_amd64.deb)
 - Debian Sid (Unstable): [ghostty_1.1.3-3_amd64.deb](https://download.opensuse.org/repositories/home:/clayrisser:/sid/Debian_Unstable/amd64/ghostty_1.1.3-3_amd64.deb), [ghostty_1.1.3-3_arm64.deb](https://download.opensuse.org/repositories/home:/clayrisser:/sid/Debian_Unstable/arm64/ghostty_1.1.3-3_arm64.deb)
 
-## Troubleshooting
-
-### APT Sources Error
-
-If you get an error like:
-```
-Error: Malformed entry 1 in sources file /etc/apt/sources.list.d/home:clayrisser:sid.sources (absolute Suite Component)
-```
-
-This is because OBS repositories use a flat structure and don't need the `Components:` field. Make sure your sources file doesn't contain `Components: main`.
-
 ## Builds
 
 The packages are built using the [Open Build Service](https://build.opensuse.org/).
